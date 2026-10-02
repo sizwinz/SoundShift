@@ -1,0 +1,26 @@
+[package]
+name = "soundshift"
+version = "0.1.0"
+description = "Deterministic, zero-DevTools playlist migrations"
+authors = ["SoundShift Team"]
+edition = "2021"
+
+[lib]
+name = "soundshift_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0", features = ["tray-icon"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.40", features = ["full"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+sha1 = "0.10"
+url = "2.5"
+keyring = "3.2"
+aes-gcm = "0.10"
+reqwest = { version = "0.12", features = ["json", "http2"] }
+chrono = "0.4"
