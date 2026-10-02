@@ -73,11 +73,21 @@ pub async fn open_auth_window(app: tauri::AppHandle, service: String) -> Result<
                     };
 
                     if let Some(token) = captured_token {
+                        // Persist credential into OS Keyring with AES-256 fallback (AUTH-04, D-03)
+                        if let Some(state) = app_handle.try_state::<crate::AppState>() {
+                            if let Ok(conn) = state.db.lock() {
+                                let _ = crate::auth::keyring_store::store_credential(
+                                    &service_id,
+                                    &token,
+                                    &conn,
+                                );
+                            }
+                        }
+
                         // Credential detected: notify frontend with payload per D-02
                         let payload = serde_json::json!({
                             "service": service_id,
-                            "status": "connected",
-                            "token": token
+                            "status": "connected"
                         });
 
                         let _ = app_handle.emit("auth:status_changed", payload);

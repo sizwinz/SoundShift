@@ -12,7 +12,9 @@ pub struct AppState {
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
-            auth::webview_trap::open_auth_window
+            auth::webview_trap::open_auth_window,
+            auth::keyring_store::check_auth,
+            auth::keyring_store::disconnect_account
         ])
         .setup(|app| {
             let app_dir = app.path().app_data_dir().expect("failed to get app data dir");
