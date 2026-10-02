@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod storage;
 
 use std::sync::Mutex;
@@ -10,6 +11,9 @@ pub struct AppState {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            auth::webview_trap::open_auth_window
+        ])
         .setup(|app| {
             let app_dir = app.path().app_data_dir().expect("failed to get app data dir");
             let conn = storage::init_db(&app_dir).expect("failed to initialize sqlite database");
