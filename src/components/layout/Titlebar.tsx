@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { isTauri } from "@tauri-apps/api/core";
+import { isTauri } from "../../utils/tauri";
 import { Minus, Square, Copy, X } from "lucide-react";
 
 export function Titlebar() {

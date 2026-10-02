@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import { invoke, isTauri } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { isTauri } from '../utils/tauri';
 import { ServiceId, AuthStatus, ServiceAccount } from '../types/auth';
 
 const INITIAL_ACCOUNTS: ServiceAccount[] = [

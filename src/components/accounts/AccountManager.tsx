@@ -1,7 +1,8 @@
 import { useAuthStatus } from '../../hooks/useAuthStatus';
 import { AccountCard } from './AccountCard';
-import { ShieldCheck, RefreshCw, AlertCircle } from 'lucide-react';
+import { ShieldCheck, RefreshCw, AlertCircle, Laptop } from 'lucide-react';
 import { ServiceId } from '../../types/auth';
+import { isTauri } from '../../utils/tauri';
 
 export function AccountManager() {
   const {
@@ -14,8 +15,25 @@ export function AccountManager() {
     expiredService,
   } = useAuthStatus();
 
+  const inTauri = isTauri();
+
   return (
     <div className="flex flex-col gap-6 max-w-4xl mx-auto w-full">
+      {/* Browser Environment Notice */}
+      {!inTauri && (
+        <div className="p-4 rounded-lg bg-zinc-900 border border-zinc-700/80 flex items-start gap-3 text-zinc-300">
+          <Laptop className="w-5 h-5 text-zinc-400 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <h4 className="text-xs font-semibold text-zinc-200">
+              Browser Preview Active
+            </h4>
+            <p className="text-xs text-zinc-400 mt-0.5 leading-relaxed">
+              You are viewing the frontend inside an external web browser. Native WebView authentication popups and OS Keyring operations execute exclusively within the <strong>SoundShift desktop application window</strong> running on your desktop. Switch to the desktop app window to connect accounts.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-800/80">
         <div>
