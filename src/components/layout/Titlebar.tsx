@@ -1,60 +1,75 @@
 import { useState, useEffect } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { isTauri } from "@tauri-apps/api/core";
 import { Minus, Square, Copy, X } from "lucide-react";
 
 export function Titlebar() {
   const [isMaximized, setIsMaximized] = useState(false);
-  const appWindow = getCurrentWindow();
+  const inTauri = isTauri();
 
   useEffect(() => {
-    const checkMaximized = async () => {
+    if (!inTauri) return;
+
+    let unlisten: (() => void) | undefined;
+
+    const setupWindow = async () => {
       try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        const appWindow = getCurrentWindow();
         const maximized = await appWindow.isMaximized();
         setIsMaximized(maximized);
-      } catch {
-        // Fallback for non-tauri or preview environments
+
+        unlisten = await appWindow.onResized(async () => {
+          try {
+            const currentMaximized = await appWindow.isMaximized();
+            setIsMaximized(currentMaximized);
+          } catch {
+            // Ignore during rapid resize
+          }
+        });
+      } catch (err) {
+        console.warn("Failed to initialize window controls:", err);
       }
     };
 
-    checkMaximized();
-
-    const unlistenPromise = appWindow.onResized(async () => {
-      try {
-        const maximized = await appWindow.isMaximized();
-        setIsMaximized(maximized);
-      } catch {
-        // Ignore in browser mock
-      }
-    });
+    setupWindow();
 
     return () => {
-      unlistenPromise.then((unlisten) => unlisten && unlisten());
+      if (unlisten) {
+        unlisten();
+      }
     };
-  }, [appWindow]);
+  }, [inTauri]);
 
   const handleMinimize = async () => {
+    if (!inTauri) return;
     try {
-      await appWindow.minimize();
-    } catch {
-      // Ignore in mock
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await getCurrentWindow().minimize();
+    } catch (err) {
+      console.warn("Minimize error:", err);
     }
   };
 
   const handleToggleMaximize = async () => {
+    if (!inTauri) return;
     try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      const appWindow = getCurrentWindow();
       await appWindow.toggleMaximize();
       const maximized = await appWindow.isMaximized();
       setIsMaximized(maximized);
-    } catch {
-      // Ignore in mock
+    } catch (err) {
+      console.warn("Toggle maximize error:", err);
     }
   };
 
   const handleClose = async () => {
+    if (!inTauri) return;
     try {
-      await appWindow.close();
-    } catch {
-      // Ignore in mock
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await getCurrentWindow().close();
+    } catch (err) {
+      console.warn("Close error:", err);
     }
   };
 
@@ -76,7 +91,7 @@ export function Titlebar() {
         <button
           type="button"
           onClick={handleMinimize}
-          className="p-1 hover:bg-[#18181b] text-zinc-400 hover:text-zinc-200 rounded transition-colors"
+          className="p-1 hover:bg-[#18181b] text-zinc-400 hover:text-zinc-200 rounded transition-colors cursor-pointer"
           title="Minimize"
           aria-label="Minimize"
         >
@@ -85,7 +100,7 @@ export function Titlebar() {
         <button
           type="button"
           onClick={handleToggleMaximize}
-          className="p-1 hover:bg-[#18181b] text-zinc-400 hover:text-zinc-200 rounded transition-colors"
+          className="p-1 hover:bg-[#18181b] text-zinc-400 hover:text-zinc-200 rounded transition-colors cursor-pointer"
           title={isMaximized ? "Restore" : "Maximize"}
           aria-label={isMaximized ? "Restore" : "Maximize"}
         >
@@ -98,7 +113,7 @@ export function Titlebar() {
         <button
           type="button"
           onClick={handleClose}
-          className="p-1 hover:bg-[#7f1d1d] text-zinc-400 hover:text-red-200 rounded transition-colors"
+          className="p-1 hover:bg-[#7f1d1d] text-zinc-400 hover:text-red-200 rounded transition-colors cursor-pointer"
           title="Close"
           aria-label="Close"
         >

@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { ServiceId, AuthStatus, ServiceAccount } from '../types/auth';
 
@@ -40,6 +40,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   });
 
   const checkStatus = useCallback(async (service?: ServiceId) => {
+    if (!isTauri()) {
+      return;
+    }
     const servicesToCheck: ServiceId[] = service ? [service] : ['ytmusic', 'spotify'];
 
     for (const s of servicesToCheck) {
@@ -64,6 +67,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const connect = useCallback(async (service: ServiceId) => {
+    if (!isTauri()) {
+      console.warn('Authentication popups require running inside the SoundShift Tauri desktop app.');
+      return;
+    }
     setLoading((prev) => ({ ...prev, [service]: true }));
     try {
       await invoke('open_auth_window', { service });
@@ -74,6 +81,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const disconnect = useCallback(async (service: ServiceId) => {
+    if (!isTauri()) {
+      return;
+    }
     setLoading((prev) => ({ ...prev, [service]: true }));
     try {
       await invoke('disconnect_account', { service });
@@ -92,6 +102,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (!isTauri()) {
+      return;
+    }
+
     // Startup background validation per D-07
     checkStatus();
 

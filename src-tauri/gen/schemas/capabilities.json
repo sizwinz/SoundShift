@@ -1,1 +1,1 @@
-{}
+{"default":{"identifier":"default","description":"Default capability for SoundShift windows","local":true,"windows":["*"],"permissions":["core:default","core:window:default","core:window:allow-close","core:window:allow-minimize","core:window:allow-toggle-maximize","core:window:allow-start-dragging","core:event:default"]}}
