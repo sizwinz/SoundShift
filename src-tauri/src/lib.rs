@@ -17,6 +17,10 @@ pub fn run() {
             auth::keyring_store::disconnect_account
         ])
         .setup(|app| {
+            if let Some(main_win) = app.get_webview_window("main") {
+                let _ = main_win.show();
+                let _ = main_win.set_focus();
+            }
             let app_dir = app.path().app_data_dir().expect("failed to get app data dir");
             let conn = storage::init_db(&app_dir).expect("failed to initialize sqlite database");
             app.manage(AppState {
