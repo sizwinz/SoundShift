@@ -1,4 +1,7 @@
 pub mod auth;
+pub mod engine;
+pub mod models;
+pub mod providers;
 pub mod storage;
 
 use std::sync::Mutex;
@@ -10,21 +13,14 @@ pub struct AppState {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    #[cfg(target_os = "windows")]
-    {
-        // Disable GPU hardware acceleration and compositing on hybrid graphics systems
-        // to prevent silent DWM rendering stalls on dual-GPU laptops.
-        std::env::set_var(
-            "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-            "--disable-gpu --disable-gpu-compositing",
-        );
-    }
-
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             auth::webview_trap::open_auth_window,
             auth::keyring_store::check_auth,
-            auth::keyring_store::disconnect_account
+            auth::keyring_store::disconnect_account,
+            providers::commands::list_provider_playlists,
+            providers::commands::fetch_playlist_tracks,
+            engine::commands::execute_playlist_matching
         ])
         .setup(|app| {
             let app_dir = app.path().app_data_dir().expect("failed to get app data dir");

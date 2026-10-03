@@ -1,0 +1,4184 @@
+[
+  {
+    "id": "studio_1",
+    "category": "studio",
+    "source": {
+      "id": "src_st_1",
+      "title": "Billie Jean",
+      "artists": [
+        "Michael Jackson"
+      ],
+      "album": "Thriller",
+      "duration_ms": 294000,
+      "isrc": "USSM18200001",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_1",
+        "title": "Billie Jean",
+        "artists": [
+          "Michael Jackson"
+        ],
+        "album": "Thriller",
+        "duration_ms": 295000,
+        "isrc": "USSM18200001",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_1"
+  },
+  {
+    "id": "studio_2",
+    "category": "studio",
+    "source": {
+      "id": "src_st_2",
+      "title": "Bohemian Rhapsody",
+      "artists": [
+        "Queen"
+      ],
+      "album": "A Night at the Opera",
+      "duration_ms": 354000,
+      "isrc": "GBUM71029606",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_2",
+        "title": "Bohemian Rhapsody",
+        "artists": [
+          "Queen"
+        ],
+        "album": "A Night at the Opera",
+        "duration_ms": 353000,
+        "isrc": "GBUM71029606",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_2"
+  },
+  {
+    "id": "studio_3",
+    "category": "studio",
+    "source": {
+      "id": "src_st_3",
+      "title": "Smells Like Teen Spirit",
+      "artists": [
+        "Nirvana"
+      ],
+      "album": "Nevermind",
+      "duration_ms": 301000,
+      "isrc": "USGF19140201",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_3",
+        "title": "Smells Like Teen Spirit",
+        "artists": [
+          "Nirvana"
+        ],
+        "album": "Nevermind",
+        "duration_ms": 301000,
+        "isrc": "USGF19140201",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_3"
+  },
+  {
+    "id": "studio_4",
+    "category": "studio",
+    "source": {
+      "id": "src_st_4",
+      "title": "Sweet Child O Mine",
+      "artists": [
+        "Guns N Roses"
+      ],
+      "album": "Appetite for Destruction",
+      "duration_ms": 356000,
+      "isrc": "USGF18740006",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_4",
+        "title": "Sweet Child O Mine",
+        "artists": [
+          "Guns N Roses"
+        ],
+        "album": "Appetite for Destruction",
+        "duration_ms": 357000,
+        "isrc": "USGF18740006",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_4"
+  },
+  {
+    "id": "studio_5",
+    "category": "studio",
+    "source": {
+      "id": "src_st_5",
+      "title": "Shape of You",
+      "artists": [
+        "Ed Sheeran"
+      ],
+      "album": "Divide",
+      "duration_ms": 233000,
+      "isrc": "GBAHS1600463",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_5",
+        "title": "Shape of You",
+        "artists": [
+          "Ed Sheeran"
+        ],
+        "album": "Divide",
+        "duration_ms": 232000,
+        "isrc": "GBAHS1600463",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_5"
+  },
+  {
+    "id": "studio_6",
+    "category": "studio",
+    "source": {
+      "id": "src_st_6",
+      "title": "Blinding Lights",
+      "artists": [
+        "The Weeknd"
+      ],
+      "album": "After Hours",
+      "duration_ms": 200000,
+      "isrc": "USUG11904206",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_6",
+        "title": "Blinding Lights",
+        "artists": [
+          "The Weeknd"
+        ],
+        "album": "After Hours",
+        "duration_ms": 200000,
+        "isrc": "USUG11904206",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_6"
+  },
+  {
+    "id": "studio_7",
+    "category": "studio",
+    "source": {
+      "id": "src_st_7",
+      "title": "Stayin Alive",
+      "artists": [
+        "Bee Gees"
+      ],
+      "album": "Saturday Night Fever",
+      "duration_ms": 285000,
+      "isrc": "USPR37700014",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_7",
+        "title": "Stayin Alive",
+        "artists": [
+          "Bee Gees"
+        ],
+        "album": "Saturday Night Fever",
+        "duration_ms": 286000,
+        "isrc": "USPR37700014",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_7"
+  },
+  {
+    "id": "studio_8",
+    "category": "studio",
+    "source": {
+      "id": "src_st_8",
+      "title": "Take On Me",
+      "artists": [
+        "a-ha"
+      ],
+      "album": "Hunting High and Low",
+      "duration_ms": 225000,
+      "isrc": "NOA688400010",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_8",
+        "title": "Take On Me",
+        "artists": [
+          "a-ha"
+        ],
+        "album": "Hunting High and Low",
+        "duration_ms": 224000,
+        "isrc": "NOA688400010",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_8"
+  },
+  {
+    "id": "studio_9",
+    "category": "studio",
+    "source": {
+      "id": "src_st_9",
+      "title": "Dreams",
+      "artists": [
+        "Fleetwood Mac"
+      ],
+      "album": "Rumours",
+      "duration_ms": 257000,
+      "isrc": "USWB10101464",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_9",
+        "title": "Dreams",
+        "artists": [
+          "Fleetwood Mac"
+        ],
+        "album": "Rumours",
+        "duration_ms": 257000,
+        "isrc": "USWB10101464",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_9"
+  },
+  {
+    "id": "studio_10",
+    "category": "studio",
+    "source": {
+      "id": "src_st_10",
+      "title": "Like a Rolling Stone",
+      "artists": [
+        "Bob Dylan"
+      ],
+      "album": "Highway 61 Revisited",
+      "duration_ms": 369000,
+      "isrc": "USSM10000124",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_10",
+        "title": "Like a Rolling Stone",
+        "artists": [
+          "Bob Dylan"
+        ],
+        "album": "Highway 61 Revisited",
+        "duration_ms": 370000,
+        "isrc": "USSM10000124",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_10"
+  },
+  {
+    "id": "studio_11",
+    "category": "studio",
+    "source": {
+      "id": "src_st_11",
+      "title": "Superstition",
+      "artists": [
+        "Stevie Wonder"
+      ],
+      "album": "Talking Book",
+      "duration_ms": 245000,
+      "isrc": "USMO17200011",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_11",
+        "title": "Superstition",
+        "artists": [
+          "Stevie Wonder"
+        ],
+        "album": "Talking Book",
+        "duration_ms": 244000,
+        "isrc": "USMO17200011",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_11"
+  },
+  {
+    "id": "studio_12",
+    "category": "studio",
+    "source": {
+      "id": "src_st_12",
+      "title": "Heroes",
+      "artists": [
+        "David Bowie"
+      ],
+      "album": "Heroes",
+      "duration_ms": 367000,
+      "isrc": "GBAYE7700032",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_12",
+        "title": "Heroes",
+        "artists": [
+          "David Bowie"
+        ],
+        "album": "Heroes",
+        "duration_ms": 367000,
+        "isrc": "GBAYE7700032",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_12"
+  },
+  {
+    "id": "studio_13",
+    "category": "studio",
+    "source": {
+      "id": "src_st_13",
+      "title": "Every Breath You Take",
+      "artists": [
+        "The Police"
+      ],
+      "album": "Synchronicity",
+      "duration_ms": 253000,
+      "isrc": "GBAMB8300013",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_13",
+        "title": "Every Breath You Take",
+        "artists": [
+          "The Police"
+        ],
+        "album": "Synchronicity",
+        "duration_ms": 254000,
+        "isrc": "GBAMB8300013",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_13"
+  },
+  {
+    "id": "studio_14",
+    "category": "studio",
+    "source": {
+      "id": "src_st_14",
+      "title": "Wonderwall",
+      "artists": [
+        "Oasis"
+      ],
+      "album": "Morning Glory",
+      "duration_ms": 258000,
+      "isrc": "GBBKS9500099",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_14",
+        "title": "Wonderwall",
+        "artists": [
+          "Oasis"
+        ],
+        "album": "Morning Glory",
+        "duration_ms": 257000,
+        "isrc": "GBBKS9500099",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_14"
+  },
+  {
+    "id": "studio_15",
+    "category": "studio",
+    "source": {
+      "id": "src_st_15",
+      "title": "Creep",
+      "artists": [
+        "Radiohead"
+      ],
+      "album": "Pablo Honey",
+      "duration_ms": 238000,
+      "isrc": "GBAYE9200070",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_15",
+        "title": "Creep",
+        "artists": [
+          "Radiohead"
+        ],
+        "album": "Pablo Honey",
+        "duration_ms": 238000,
+        "isrc": "GBAYE9200070",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_15"
+  },
+  {
+    "id": "studio_16",
+    "category": "studio",
+    "source": {
+      "id": "src_st_16",
+      "title": "Hallelujah",
+      "artists": [
+        "Jeff Buckley"
+      ],
+      "album": "Grace",
+      "duration_ms": 413000,
+      "isrc": "USSM19400112",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_16",
+        "title": "Hallelujah",
+        "artists": [
+          "Jeff Buckley"
+        ],
+        "album": "Grace",
+        "duration_ms": 414000,
+        "isrc": "USSM19400112",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_16"
+  },
+  {
+    "id": "studio_17",
+    "category": "studio",
+    "source": {
+      "id": "src_st_17",
+      "title": "In the Air Tonight",
+      "artists": [
+        "Phil Collins"
+      ],
+      "album": "Face Value",
+      "duration_ms": 334000,
+      "isrc": "USAT20100344",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_17",
+        "title": "In the Air Tonight",
+        "artists": [
+          "Phil Collins"
+        ],
+        "album": "Face Value",
+        "duration_ms": 333000,
+        "isrc": "USAT20100344",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_17"
+  },
+  {
+    "id": "studio_18",
+    "category": "studio",
+    "source": {
+      "id": "src_st_18",
+      "title": "Losing My Religion",
+      "artists": [
+        "R.E.M."
+      ],
+      "album": "Out of Time",
+      "duration_ms": 268000,
+      "isrc": "USWB10101468",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_18",
+        "title": "Losing My Religion",
+        "artists": [
+          "R.E.M."
+        ],
+        "album": "Out of Time",
+        "duration_ms": 268000,
+        "isrc": "USWB10101468",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_18"
+  },
+  {
+    "id": "studio_19",
+    "category": "studio",
+    "source": {
+      "id": "src_st_19",
+      "title": "Africa",
+      "artists": [
+        "TOTO"
+      ],
+      "album": "Toto IV",
+      "duration_ms": 295000,
+      "isrc": "USSM18200099",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_19",
+        "title": "Africa",
+        "artists": [
+          "TOTO"
+        ],
+        "album": "Toto IV",
+        "duration_ms": 296000,
+        "isrc": "USSM18200099",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_19"
+  },
+  {
+    "id": "studio_20",
+    "category": "studio",
+    "source": {
+      "id": "src_st_20",
+      "title": "Imagine",
+      "artists": [
+        "John Lennon"
+      ],
+      "album": "Imagine",
+      "duration_ms": 187000,
+      "isrc": "GBAYE7100012",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_20",
+        "title": "Imagine",
+        "artists": [
+          "John Lennon"
+        ],
+        "album": "Imagine",
+        "duration_ms": 186000,
+        "isrc": "GBAYE7100012",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_20"
+  },
+  {
+    "id": "studio_21",
+    "category": "studio",
+    "source": {
+      "id": "src_st_21",
+      "title": "Hotel California",
+      "artists": [
+        "Eagles"
+      ],
+      "album": "Hotel California",
+      "duration_ms": 391000,
+      "isrc": "USPR37604512",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_21",
+        "title": "Hotel California",
+        "artists": [
+          "Eagles"
+        ],
+        "album": "Hotel California",
+        "duration_ms": 391000,
+        "isrc": "USPR37604512",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_21"
+  },
+  {
+    "id": "studio_22",
+    "category": "studio",
+    "source": {
+      "id": "src_st_22",
+      "title": "Hey Jude",
+      "artists": [
+        "The Beatles"
+      ],
+      "album": "Past Masters",
+      "duration_ms": 431000,
+      "isrc": "GBAYE6800001",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_22",
+        "title": "Hey Jude",
+        "artists": [
+          "The Beatles"
+        ],
+        "album": "Past Masters",
+        "duration_ms": 432000,
+        "isrc": "GBAYE6800001",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_22"
+  },
+  {
+    "id": "studio_23",
+    "category": "studio",
+    "source": {
+      "id": "src_st_23",
+      "title": "Stairway to Heaven",
+      "artists": [
+        "Led Zeppelin"
+      ],
+      "album": "Led Zeppelin IV",
+      "duration_ms": 482000,
+      "isrc": "USAT20700144",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_23",
+        "title": "Stairway to Heaven",
+        "artists": [
+          "Led Zeppelin"
+        ],
+        "album": "Led Zeppelin IV",
+        "duration_ms": 481000,
+        "isrc": "USAT20700144",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_23"
+  },
+  {
+    "id": "studio_24",
+    "category": "studio",
+    "source": {
+      "id": "src_st_24",
+      "title": "One",
+      "artists": [
+        "U2"
+      ],
+      "album": "Achtung Baby",
+      "duration_ms": 276000,
+      "isrc": "GBUM79100014",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_24",
+        "title": "One",
+        "artists": [
+          "U2"
+        ],
+        "album": "Achtung Baby",
+        "duration_ms": 276000,
+        "isrc": "GBUM79100014",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_24"
+  },
+  {
+    "id": "studio_25",
+    "category": "studio",
+    "source": {
+      "id": "src_st_25",
+      "title": "Yesterday",
+      "artists": [
+        "The Beatles"
+      ],
+      "album": "Help!",
+      "duration_ms": 125000,
+      "isrc": "GBAYE6500011",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_25",
+        "title": "Yesterday",
+        "artists": [
+          "The Beatles"
+        ],
+        "album": "Help!",
+        "duration_ms": 126000,
+        "isrc": "GBAYE6500011",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_25"
+  },
+  {
+    "id": "studio_26",
+    "category": "studio",
+    "source": {
+      "id": "src_st_26",
+      "title": "Let It Be",
+      "artists": [
+        "The Beatles"
+      ],
+      "album": "Let It Be",
+      "duration_ms": 243000,
+      "isrc": "GBAYE7000020",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_26",
+        "title": "Let It Be",
+        "artists": [
+          "The Beatles"
+        ],
+        "album": "Let It Be",
+        "duration_ms": 242000,
+        "isrc": "GBAYE7000020",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_26"
+  },
+  {
+    "id": "studio_27",
+    "category": "studio",
+    "source": {
+      "id": "src_st_27",
+      "title": "Paint It Black",
+      "artists": [
+        "The Rolling Stones"
+      ],
+      "album": "Aftermath",
+      "duration_ms": 202000,
+      "isrc": "USAB16600013",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_27",
+        "title": "Paint It Black",
+        "artists": [
+          "The Rolling Stones"
+        ],
+        "album": "Aftermath",
+        "duration_ms": 202000,
+        "isrc": "USAB16600013",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_27"
+  },
+  {
+    "id": "studio_28",
+    "category": "studio",
+    "source": {
+      "id": "src_st_28",
+      "title": "Satisfaction",
+      "artists": [
+        "The Rolling Stones"
+      ],
+      "album": "Out of Our Heads",
+      "duration_ms": 223000,
+      "isrc": "USAB16500001",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_28",
+        "title": "Satisfaction",
+        "artists": [
+          "The Rolling Stones"
+        ],
+        "album": "Out of Our Heads",
+        "duration_ms": 224000,
+        "isrc": "USAB16500001",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_28"
+  },
+  {
+    "id": "studio_29",
+    "category": "studio",
+    "source": {
+      "id": "src_st_29",
+      "title": "Light My Fire",
+      "artists": [
+        "The Doors"
+      ],
+      "album": "The Doors",
+      "duration_ms": 426000,
+      "isrc": "USEE10000001",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_29",
+        "title": "Light My Fire",
+        "artists": [
+          "The Doors"
+        ],
+        "album": "The Doors",
+        "duration_ms": 425000,
+        "isrc": "USEE10000001",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_29"
+  },
+  {
+    "id": "studio_30",
+    "category": "studio",
+    "source": {
+      "id": "src_st_30",
+      "title": "Thunderstruck",
+      "artists": [
+        "AC/DC"
+      ],
+      "album": "The Razors Edge",
+      "duration_ms": 292000,
+      "isrc": "AUAP09000014",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_30",
+        "title": "Thunderstruck",
+        "artists": [
+          "AC/DC"
+        ],
+        "album": "The Razors Edge",
+        "duration_ms": 292000,
+        "isrc": "AUAP09000014",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_30"
+  },
+  {
+    "id": "studio_31",
+    "category": "studio",
+    "source": {
+      "id": "src_st_31",
+      "title": "Back in Black",
+      "artists": [
+        "AC/DC"
+      ],
+      "album": "Back in Black",
+      "duration_ms": 255000,
+      "isrc": "AUAP08000012",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_31",
+        "title": "Back in Black",
+        "artists": [
+          "AC/DC"
+        ],
+        "album": "Back in Black",
+        "duration_ms": 256000,
+        "isrc": "AUAP08000012",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_31"
+  },
+  {
+    "id": "studio_32",
+    "category": "studio",
+    "source": {
+      "id": "src_st_32",
+      "title": "Highway to Hell",
+      "artists": [
+        "AC/DC"
+      ],
+      "album": "Highway to Hell",
+      "duration_ms": 208000,
+      "isrc": "AUAP07900010",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_32",
+        "title": "Highway to Hell",
+        "artists": [
+          "AC/DC"
+        ],
+        "album": "Highway to Hell",
+        "duration_ms": 207000,
+        "isrc": "AUAP07900010",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_32"
+  },
+  {
+    "id": "studio_33",
+    "category": "studio",
+    "source": {
+      "id": "src_st_33",
+      "title": "Enter Sandman",
+      "artists": [
+        "Metallica"
+      ],
+      "album": "Metallica",
+      "duration_ms": 331000,
+      "isrc": "USMR19100015",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_33",
+        "title": "Enter Sandman",
+        "artists": [
+          "Metallica"
+        ],
+        "album": "Metallica",
+        "duration_ms": 331000,
+        "isrc": "USMR19100015",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_33"
+  },
+  {
+    "id": "studio_34",
+    "category": "studio",
+    "source": {
+      "id": "src_st_34",
+      "title": "Master of Puppets",
+      "artists": [
+        "Metallica"
+      ],
+      "album": "Master of Puppets",
+      "duration_ms": 515000,
+      "isrc": "USMR18600002",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_34",
+        "title": "Master of Puppets",
+        "artists": [
+          "Metallica"
+        ],
+        "album": "Master of Puppets",
+        "duration_ms": 516000,
+        "isrc": "USMR18600002",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_34"
+  },
+  {
+    "id": "studio_35",
+    "category": "studio",
+    "source": {
+      "id": "src_st_35",
+      "title": "Nothing Else Matters",
+      "artists": [
+        "Metallica"
+      ],
+      "album": "Metallica",
+      "duration_ms": 388000,
+      "isrc": "USMR19100018",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_35",
+        "title": "Nothing Else Matters",
+        "artists": [
+          "Metallica"
+        ],
+        "album": "Metallica",
+        "duration_ms": 387000,
+        "isrc": "USMR19100018",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_35"
+  },
+  {
+    "id": "studio_36",
+    "category": "studio",
+    "source": {
+      "id": "src_st_36",
+      "title": "Roxanne",
+      "artists": [
+        "The Police"
+      ],
+      "album": "Outlandos d Amour",
+      "duration_ms": 194000,
+      "isrc": "GBAMB7800011",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_36",
+        "title": "Roxanne",
+        "artists": [
+          "The Police"
+        ],
+        "album": "Outlandos d Amour",
+        "duration_ms": 194000,
+        "isrc": "GBAMB7800011",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_36"
+  },
+  {
+    "id": "studio_37",
+    "category": "studio",
+    "source": {
+      "id": "src_st_37",
+      "title": "Message in a Bottle",
+      "artists": [
+        "The Police"
+      ],
+      "album": "Reggatta de Blanc",
+      "duration_ms": 290000,
+      "isrc": "GBAMB7900012",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_37",
+        "title": "Message in a Bottle",
+        "artists": [
+          "The Police"
+        ],
+        "album": "Reggatta de Blanc",
+        "duration_ms": 291000,
+        "isrc": "GBAMB7900012",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_37"
+  },
+  {
+    "id": "studio_38",
+    "category": "studio",
+    "source": {
+      "id": "src_st_38",
+      "title": "Sultans of Swing",
+      "artists": [
+        "Dire Straits"
+      ],
+      "album": "Dire Straits",
+      "duration_ms": 348000,
+      "isrc": "GBUM77800010",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_38",
+        "title": "Sultans of Swing",
+        "artists": [
+          "Dire Straits"
+        ],
+        "album": "Dire Straits",
+        "duration_ms": 347000,
+        "isrc": "GBUM77800010",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_38"
+  },
+  {
+    "id": "studio_39",
+    "category": "studio",
+    "source": {
+      "id": "src_st_39",
+      "title": "Money for Nothing",
+      "artists": [
+        "Dire Straits"
+      ],
+      "album": "Brothers in Arms",
+      "duration_ms": 506000,
+      "isrc": "GBUM78500012",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_39",
+        "title": "Money for Nothing",
+        "artists": [
+          "Dire Straits"
+        ],
+        "album": "Brothers in Arms",
+        "duration_ms": 506000,
+        "isrc": "GBUM78500012",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_39"
+  },
+  {
+    "id": "studio_40",
+    "category": "studio",
+    "source": {
+      "id": "src_st_40",
+      "title": "Another Brick in the Wall",
+      "artists": [
+        "Pink Floyd"
+      ],
+      "album": "The Wall",
+      "duration_ms": 239000,
+      "isrc": "GBAYE7900022",
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_st_40",
+        "title": "Another Brick in the Wall",
+        "artists": [
+          "Pink Floyd"
+        ],
+        "album": "The Wall",
+        "duration_ms": 240000,
+        "isrc": "GBAYE7900022",
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_st_40"
+  },
+  {
+    "id": "remaster_1",
+    "category": "remaster",
+    "source": {
+      "id": "src_rm_1",
+      "title": "Paranoid - 2012 Remaster",
+      "artists": [
+        "Black Sabbath"
+      ],
+      "album": "Classic Collection",
+      "duration_ms": 168000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_rm_1",
+        "title": "Paranoid",
+        "artists": [
+          "Black Sabbath"
+        ],
+        "album": "Studio Album",
+        "duration_ms": 169000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_rm_1"
+  },
+  {
+    "id": "remaster_2",
+    "category": "remaster",
+    "source": {
+      "id": "src_rm_2",
+      "title": "Comfortably Numb - 2011 Remastered Version",
+      "artists": [
+        "Pink Floyd"
+      ],
+      "album": "Classic Collection",
+      "duration_ms": 382000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_rm_2",
+        "title": "Comfortably Numb",
+        "artists": [
+          "Pink Floyd"
+        ],
+        "album": "Studio Album",
+        "duration_ms": 383000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_rm_2"
+  },
+  {
+    "id": "remaster_3",
+    "category": "remaster",
+    "source": {
+      "id": "src_rm_3",
+      "title": "Time - 2023 Remaster",
+      "artists": [
+        "Pink Floyd"
+      ],
+      "album": "Classic Collection",
+      "duration_ms": 425000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_rm_3",
+        "title": "Time",
+        "artists": [
+          "Pink Floyd"
+        ],
+        "album": "Studio Album",
+        "duration_ms": 426000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_rm_3"
+  },
+  {
+    "id": "remaster_4",
+    "category": "remaster",
+    "source": {
+      "id": "src_rm_4",
+      "title": "Money - 2011 Remaster",
+      "artists": [
+        "Pink Floyd"
+      ],
+      "album": "Classic Collection",
+      "duration_ms": 382000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_rm_4",
+        "title": "Money",
+        "artists": [
+          "Pink Floyd"
+        ],
+        "album": "Studio Album",
+        "duration_ms": 383000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_rm_4"
+  },
+  {
+    "id": "remaster_5",
+    "category": "remaster",
+    "source": {
+      "id": "src_rm_5",
+      "title": "Wish You Were Here - 2011 Remaster",
+      "artists": [
+        "Pink Floyd"
+      ],
+      "album": "Classic Collection",
+      "duration_ms": 334000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_rm_5",
+        "title": "Wish You Were Here",
+        "artists": [
+          "Pink Floyd"
+        ],
+        "album": "Studio Album",
+        "duration_ms": 335000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_rm_5"
+  },
+  {
+    "id": "remaster_6",
+    "category": "remaster",
+    "source": {
+      "id": "src_rm_6",
+      "title": "Shine On You Crazy Diamond - 2011 Remaster",
+      "artists": [
+        "Pink Floyd"
+      ],
+      "album": "Classic Collection",
+      "duration_ms": 811000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_rm_6",
+        "title": "Shine On You Crazy Diamond",
+        "artists": [
+          "Pink Floyd"
+        ],
+        "album": "Studio Album",
+        "duration_ms": 812000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_rm_6"
+  },
+  {
+    "id": "remaster_7",
+    "category": "remaster",
+    "source": {
+      "id": "src_rm_7",
+      "title": "Black Dog - 2012 Remaster",
+      "artists": [
+        "Led Zeppelin"
+      ],
+      "album": "Classic Collection",
+      "duration_ms": 296000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_rm_7",
+        "title": "Black Dog",
+        "artists": [
+          "Led Zeppelin"
+        ],
+        "album": "Studio Album",
+        "duration_ms": 297000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_rm_7"
+  },
+  {
+    "id": "remaster_8",
+    "category": "remaster",
+    "source": {
+      "id": "src_rm_8",
+      "title": "Rock and Roll - 2012 Remaster",
+      "artists": [
+        "Led Zeppelin"
+      ],
+      "album": "Classic Collection",
+      "duration_ms": 220000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_rm_8",
+        "title": "Rock and Roll",
+        "artists": [
+          "Led Zeppelin"
+        ],
+        "album": "Studio Album",
+        "duration_ms": 221000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_rm_8"
+  },
+  {
+    "id": "remaster_9",
+    "category": "remaster",
+    "source": {
+      "id": "src_rm_9",
+      "title": "Kashmir - 2012 Remaster",
+      "artists": [
+        "Led Zeppelin"
+      ],
+      "album": "Classic Collection",
+      "duration_ms": 517000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_rm_9",
+        "title": "Kashmir",
+        "artists": [
+          "Led Zeppelin"
+        ],
+        "album": "Studio Album",
+        "duration_ms": 518000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_rm_9"
+  },
+  {
+    "id": "remaster_10",
+    "category": "remaster",
+    "source": {
+      "id": "src_rm_10",
+      "title": "Immigrant Song - 2012 Remaster",
+      "artists": [
+        "Led Zeppelin"
+      ],
+      "album": "Classic Collection",
+      "duration_ms": 146000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_rm_10",
+        "title": "Immigrant Song",
+        "artists": [
+          "Led Zeppelin"
+        ],
+        "album": "Studio Album",
+        "duration_ms": 147000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_rm_10"
+  },
+  {
+    "id": "remaster_11",
+    "category": "remaster",
+    "source": {
+      "id": "src_rm_11",
+      "title": "Whole Lotta Love - 1990 Remaster",
+      "artists": [
+        "Led Zeppelin"
+      ],
+      "album": "Classic Collection",
+      "duration_ms": 334000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_rm_11",
+        "title": "Whole Lotta Love",
+        "artists": [
+          "Led Zeppelin"
+        ],
+        "album": "Studio Album",
+        "duration_ms": 335000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_rm_11"
+  },
+  {
+    "id": "remaster_12",
+    "category": "remaster",
+    "source": {
+      "id": "src_rm_12",
+      "title": "Angie - 2020 Remaster",
+      "artists": [
+        "The Rolling Stones"
+      ],
+      "album": "Classic Collection",
+      "duration_ms": 272000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_rm_12",
+        "title": "Angie",
+        "artists": [
+          "The Rolling Stones"
+        ],
+        "album": "Studio Album",
+        "duration_ms": 273000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_rm_12"
+  },
+  {
+    "id": "remaster_13",
+    "category": "remaster",
+    "source": {
+      "id": "src_rm_13",
+      "title": "Sympathy For The Devil - 50th Anniversary Edition",
+      "artists": [
+        "The Rolling Stones"
+      ],
+      "album": "Classic Collection",
+      "duration_ms": 378000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_rm_13",
+        "title": "Sympathy For The Devil",
+        "artists": [
+          "The Rolling Stones"
+        ],
+        "album": "Studio Album",
+        "duration_ms": 379000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_rm_13"
+  },
+  {
+    "id": "remaster_14",
+    "category": "remaster",
+    "source": {
+      "id": "src_rm_14",
+      "title": "Gimme Shelter - 2019 Remaster",
+      "artists": [
+        "The Rolling Stones"
+      ],
+      "album": "Classic Collection",
+      "duration_ms": 270000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_rm_14",
+        "title": "Gimme Shelter",
+        "artists": [
+          "The Rolling Stones"
+        ],
+        "album": "Studio Album",
+        "duration_ms": 271000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_rm_14"
+  },
+  {
+    "id": "remaster_15",
+    "category": "remaster",
+    "source": {
+      "id": "src_rm_15",
+      "title": "Space Oddity - 2015 Remaster",
+      "artists": [
+        "David Bowie"
+      ],
+      "album": "Classic Collection",
+      "duration_ms": 315000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_rm_15",
+        "title": "Space Oddity",
+        "artists": [
+          "David Bowie"
+        ],
+        "album": "Studio Album",
+        "duration_ms": 316000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_rm_15"
+  },
+  {
+    "id": "remaster_16",
+    "category": "remaster",
+    "source": {
+      "id": "src_rm_16",
+      "title": "Life on Mars? - 2015 Remaster",
+      "artists": [
+        "David Bowie"
+      ],
+      "album": "Classic Collection",
+      "duration_ms": 235000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_rm_16",
+        "title": "Life on Mars?",
+        "artists": [
+          "David Bowie"
+        ],
+        "album": "Studio Album",
+        "duration_ms": 236000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_rm_16"
+  },
+  {
+    "id": "remaster_17",
+    "category": "remaster",
+    "source": {
+      "id": "src_rm_17",
+      "title": "Starman - 2012 Remaster",
+      "artists": [
+        "David Bowie"
+      ],
+      "album": "Classic Collection",
+      "duration_ms": 256000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_rm_17",
+        "title": "Starman",
+        "artists": [
+          "David Bowie"
+        ],
+        "album": "Studio Album",
+        "duration_ms": 257000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_rm_17"
+  },
+  {
+    "id": "remaster_18",
+    "category": "remaster",
+    "source": {
+      "id": "src_rm_18",
+      "title": "Rebel Rebel - 2016 Remaster",
+      "artists": [
+        "David Bowie"
+      ],
+      "album": "Classic Collection",
+      "duration_ms": 270000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_rm_18",
+        "title": "Rebel Rebel",
+        "artists": [
+          "David Bowie"
+        ],
+        "album": "Studio Album",
+        "duration_ms": 271000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_rm_18"
+  },
+  {
+    "id": "remaster_19",
+    "category": "remaster",
+    "source": {
+      "id": "src_rm_19",
+      "title": "Ziggy Stardust - 2012 Remaster",
+      "artists": [
+        "David Bowie"
+      ],
+      "album": "Classic Collection",
+      "duration_ms": 193000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_rm_19",
+        "title": "Ziggy Stardust",
+        "artists": [
+          "David Bowie"
+        ],
+        "album": "Studio Album",
+        "duration_ms": 194000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_rm_19"
+  },
+  {
+    "id": "remaster_20",
+    "category": "remaster",
+    "source": {
+      "id": "src_rm_20",
+      "title": "London Calling - 2013 Remaster",
+      "artists": [
+        "The Clash"
+      ],
+      "album": "Classic Collection",
+      "duration_ms": 200000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_rm_20",
+        "title": "London Calling",
+        "artists": [
+          "The Clash"
+        ],
+        "album": "Studio Album",
+        "duration_ms": 201000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_rm_20"
+  },
+  {
+    "id": "remaster_21",
+    "category": "remaster",
+    "source": {
+      "id": "src_rm_21",
+      "title": "Should I Stay or Should I Go - 2013 Remaster",
+      "artists": [
+        "The Clash"
+      ],
+      "album": "Classic Collection",
+      "duration_ms": 188000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_rm_21",
+        "title": "Should I Stay or Should I Go",
+        "artists": [
+          "The Clash"
+        ],
+        "album": "Studio Album",
+        "duration_ms": 189000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_rm_21"
+  },
+  {
+    "id": "remaster_22",
+    "category": "remaster",
+    "source": {
+      "id": "src_rm_22",
+      "title": "Roxanne - 2003 Remastered",
+      "artists": [
+        "The Police"
+      ],
+      "album": "Classic Collection",
+      "duration_ms": 195000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_rm_22",
+        "title": "Roxanne",
+        "artists": [
+          "The Police"
+        ],
+        "album": "Studio Album",
+        "duration_ms": 196000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_rm_22"
+  },
+  {
+    "id": "remaster_23",
+    "category": "remaster",
+    "source": {
+      "id": "src_rm_23",
+      "title": "Message in a Bottle - 2003 Remastered",
+      "artists": [
+        "The Police"
+      ],
+      "album": "Classic Collection",
+      "duration_ms": 291000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_rm_23",
+        "title": "Message in a Bottle",
+        "artists": [
+          "The Police"
+        ],
+        "album": "Studio Album",
+        "duration_ms": 292000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_rm_23"
+  },
+  {
+    "id": "remaster_24",
+    "category": "remaster",
+    "source": {
+      "id": "src_rm_24",
+      "title": "Every Little Thing She Does Is Magic - 2003 Remastered",
+      "artists": [
+        "The Police"
+      ],
+      "album": "Classic Collection",
+      "duration_ms": 260000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_rm_24",
+        "title": "Every Little Thing She Does Is Magic",
+        "artists": [
+          "The Police"
+        ],
+        "album": "Studio Album",
+        "duration_ms": 261000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_rm_24"
+  },
+  {
+    "id": "remaster_25",
+    "category": "remaster",
+    "source": {
+      "id": "src_rm_25",
+      "title": "Sultans of Swing - 1996 Remaster",
+      "artists": [
+        "Dire Straits"
+      ],
+      "album": "Classic Collection",
+      "duration_ms": 349000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_rm_25",
+        "title": "Sultans of Swing",
+        "artists": [
+          "Dire Straits"
+        ],
+        "album": "Studio Album",
+        "duration_ms": 350000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_rm_25"
+  },
+  {
+    "id": "feat_1",
+    "category": "featured",
+    "source": {
+      "id": "src_ft_1",
+      "title": "Under Pressure (feat. David Bowie)",
+      "artists": [
+        "Queen"
+      ],
+      "album": "Collab Album",
+      "duration_ms": 248000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_ft_1",
+        "title": "Under Pressure",
+        "artists": [
+          "Queen",
+          "David Bowie"
+        ],
+        "album": "Collab Album",
+        "duration_ms": 248500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_ft_1"
+  },
+  {
+    "id": "feat_2",
+    "category": "featured",
+    "source": {
+      "id": "src_ft_2",
+      "title": "Get Lucky (feat. Pharrell Williams)",
+      "artists": [
+        "Daft Punk"
+      ],
+      "album": "Collab Album",
+      "duration_ms": 248000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_ft_2",
+        "title": "Get Lucky",
+        "artists": [
+          "Daft Punk",
+          "Pharrell Williams"
+        ],
+        "album": "Collab Album",
+        "duration_ms": 248500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_ft_2"
+  },
+  {
+    "id": "feat_3",
+    "category": "featured",
+    "source": {
+      "id": "src_ft_3",
+      "title": "Uptown Funk (feat. Bruno Mars)",
+      "artists": [
+        "Mark Ronson"
+      ],
+      "album": "Collab Album",
+      "duration_ms": 270000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_ft_3",
+        "title": "Uptown Funk",
+        "artists": [
+          "Mark Ronson",
+          "Bruno Mars"
+        ],
+        "album": "Collab Album",
+        "duration_ms": 270500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_ft_3"
+  },
+  {
+    "id": "feat_4",
+    "category": "featured",
+    "source": {
+      "id": "src_ft_4",
+      "title": "Feel Good Inc. (feat. De La Soul)",
+      "artists": [
+        "Gorillaz"
+      ],
+      "album": "Collab Album",
+      "duration_ms": 223000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_ft_4",
+        "title": "Feel Good Inc.",
+        "artists": [
+          "Gorillaz",
+          "De La Soul"
+        ],
+        "album": "Collab Album",
+        "duration_ms": 223500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_ft_4"
+  },
+  {
+    "id": "feat_5",
+    "category": "featured",
+    "source": {
+      "id": "src_ft_5",
+      "title": "Clint Eastwood (feat. Del the Funky Homosapien)",
+      "artists": [
+        "Gorillaz"
+      ],
+      "album": "Collab Album",
+      "duration_ms": 340000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_ft_5",
+        "title": "Clint Eastwood",
+        "artists": [
+          "Gorillaz",
+          "Del the Funky Homosapien"
+        ],
+        "album": "Collab Album",
+        "duration_ms": 340500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_ft_5"
+  },
+  {
+    "id": "feat_6",
+    "category": "featured",
+    "source": {
+      "id": "src_ft_6",
+      "title": "Levitating (feat. Daft Punk)",
+      "artists": [
+        "Dua Lipa"
+      ],
+      "album": "Collab Album",
+      "duration_ms": 203000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_ft_6",
+        "title": "Levitating",
+        "artists": [
+          "Dua Lipa",
+          "Daft Punk"
+        ],
+        "album": "Collab Album",
+        "duration_ms": 203500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_ft_6"
+  },
+  {
+    "id": "feat_7",
+    "category": "featured",
+    "source": {
+      "id": "src_ft_7",
+      "title": "Sunflower (feat. Swae Lee)",
+      "artists": [
+        "Post Malone"
+      ],
+      "album": "Collab Album",
+      "duration_ms": 158000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_ft_7",
+        "title": "Sunflower",
+        "artists": [
+          "Post Malone",
+          "Swae Lee"
+        ],
+        "album": "Collab Album",
+        "duration_ms": 158500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_ft_7"
+  },
+  {
+    "id": "feat_8",
+    "category": "featured",
+    "source": {
+      "id": "src_ft_8",
+      "title": "Rockstar (feat. 21 Savage)",
+      "artists": [
+        "Post Malone"
+      ],
+      "album": "Collab Album",
+      "duration_ms": 218000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_ft_8",
+        "title": "Rockstar",
+        "artists": [
+          "Post Malone",
+          "21 Savage"
+        ],
+        "album": "Collab Album",
+        "duration_ms": 218500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_ft_8"
+  },
+  {
+    "id": "feat_9",
+    "category": "featured",
+    "source": {
+      "id": "src_ft_9",
+      "title": "Gods Plan (feat. Lil Wayne)",
+      "artists": [
+        "Drake"
+      ],
+      "album": "Collab Album",
+      "duration_ms": 199000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_ft_9",
+        "title": "Gods Plan",
+        "artists": [
+          "Drake",
+          "Lil Wayne"
+        ],
+        "album": "Collab Album",
+        "duration_ms": 199500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_ft_9"
+  },
+  {
+    "id": "feat_10",
+    "category": "featured",
+    "source": {
+      "id": "src_ft_10",
+      "title": "Bad Guy (feat. Justin Bieber)",
+      "artists": [
+        "Billie Eilish"
+      ],
+      "album": "Collab Album",
+      "duration_ms": 194000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_ft_10",
+        "title": "Bad Guy",
+        "artists": [
+          "Billie Eilish",
+          "Justin Bieber"
+        ],
+        "album": "Collab Album",
+        "duration_ms": 194500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_ft_10"
+  },
+  {
+    "id": "feat_11",
+    "category": "featured",
+    "source": {
+      "id": "src_ft_11",
+      "title": "Lovely (feat. Khalid)",
+      "artists": [
+        "Billie Eilish"
+      ],
+      "album": "Collab Album",
+      "duration_ms": 200000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_ft_11",
+        "title": "Lovely",
+        "artists": [
+          "Billie Eilish",
+          "Khalid"
+        ],
+        "album": "Collab Album",
+        "duration_ms": 200500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_ft_11"
+  },
+  {
+    "id": "feat_12",
+    "category": "featured",
+    "source": {
+      "id": "src_ft_12",
+      "title": "Señorita (feat. Camila Cabello)",
+      "artists": [
+        "Shawn Mendes"
+      ],
+      "album": "Collab Album",
+      "duration_ms": 191000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_ft_12",
+        "title": "Señorita",
+        "artists": [
+          "Shawn Mendes",
+          "Camila Cabello"
+        ],
+        "album": "Collab Album",
+        "duration_ms": 191500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_ft_12"
+  },
+  {
+    "id": "feat_13",
+    "category": "featured",
+    "source": {
+      "id": "src_ft_13",
+      "title": "Despacito (feat. Daddy Yankee)",
+      "artists": [
+        "Luis Fonsi"
+      ],
+      "album": "Collab Album",
+      "duration_ms": 228000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_ft_13",
+        "title": "Despacito",
+        "artists": [
+          "Luis Fonsi",
+          "Daddy Yankee"
+        ],
+        "album": "Collab Album",
+        "duration_ms": 228500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_ft_13"
+  },
+  {
+    "id": "feat_14",
+    "category": "featured",
+    "source": {
+      "id": "src_ft_14",
+      "title": "Mi Gente (feat. Willy William)",
+      "artists": [
+        "J Balvin"
+      ],
+      "album": "Collab Album",
+      "duration_ms": 189000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_ft_14",
+        "title": "Mi Gente",
+        "artists": [
+          "J Balvin",
+          "Willy William"
+        ],
+        "album": "Collab Album",
+        "duration_ms": 189500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_ft_14"
+  },
+  {
+    "id": "feat_15",
+    "category": "featured",
+    "source": {
+      "id": "src_ft_15",
+      "title": "Cold Heart (feat. Dua Lipa)",
+      "artists": [
+        "Elton John"
+      ],
+      "album": "Collab Album",
+      "duration_ms": 202000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_ft_15",
+        "title": "Cold Heart",
+        "artists": [
+          "Elton John",
+          "Dua Lipa"
+        ],
+        "album": "Collab Album",
+        "duration_ms": 202500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_ft_15"
+  },
+  {
+    "id": "feat_16",
+    "category": "featured",
+    "source": {
+      "id": "src_ft_16",
+      "title": "Hold Me Closer (feat. Britney Spears)",
+      "artists": [
+        "Elton John"
+      ],
+      "album": "Collab Album",
+      "duration_ms": 202000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_ft_16",
+        "title": "Hold Me Closer",
+        "artists": [
+          "Elton John",
+          "Britney Spears"
+        ],
+        "album": "Collab Album",
+        "duration_ms": 202500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_ft_16"
+  },
+  {
+    "id": "feat_17",
+    "category": "featured",
+    "source": {
+      "id": "src_ft_17",
+      "title": "Save Your Tears (feat. Ariana Grande)",
+      "artists": [
+        "The Weeknd"
+      ],
+      "album": "Collab Album",
+      "duration_ms": 191000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_ft_17",
+        "title": "Save Your Tears",
+        "artists": [
+          "The Weeknd",
+          "Ariana Grande"
+        ],
+        "album": "Collab Album",
+        "duration_ms": 191500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_ft_17"
+  },
+  {
+    "id": "feat_18",
+    "category": "featured",
+    "source": {
+      "id": "src_ft_18",
+      "title": "Die For You (feat. Ariana Grande)",
+      "artists": [
+        "The Weeknd"
+      ],
+      "album": "Collab Album",
+      "duration_ms": 232000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_ft_18",
+        "title": "Die For You",
+        "artists": [
+          "The Weeknd",
+          "Ariana Grande"
+        ],
+        "album": "Collab Album",
+        "duration_ms": 232500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_ft_18"
+  },
+  {
+    "id": "feat_19",
+    "category": "featured",
+    "source": {
+      "id": "src_ft_19",
+      "title": "Creepin (feat. The Weeknd & 21 Savage)",
+      "artists": [
+        "Metro Boomin"
+      ],
+      "album": "Collab Album",
+      "duration_ms": 221000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_ft_19",
+        "title": "Creepin",
+        "artists": [
+          "Metro Boomin",
+          "The Weeknd",
+          "21 Savage"
+        ],
+        "album": "Collab Album",
+        "duration_ms": 221500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_ft_19"
+  },
+  {
+    "id": "feat_20",
+    "category": "featured",
+    "source": {
+      "id": "src_ft_20",
+      "title": "Too Many Nights (feat. Don Toliver & Future)",
+      "artists": [
+        "Metro Boomin"
+      ],
+      "album": "Collab Album",
+      "duration_ms": 199000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_ft_20",
+        "title": "Too Many Nights",
+        "artists": [
+          "Metro Boomin",
+          "Don Toliver",
+          "Future"
+        ],
+        "album": "Collab Album",
+        "duration_ms": 199500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_ft_20"
+  },
+  {
+    "id": "diacritic_1",
+    "category": "diacritics",
+    "source": {
+      "id": "src_dia_1",
+      "title": "Malamente",
+      "artists": [
+        "Rosalía"
+      ],
+      "album": "El Mal Querer",
+      "duration_ms": 150000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_dia_1",
+        "title": "Malamente",
+        "artists": [
+          "Rosalía"
+        ],
+        "album": "El Mal Querer",
+        "duration_ms": 151000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_dia_1"
+  },
+  {
+    "id": "diacritic_2",
+    "category": "diacritics",
+    "source": {
+      "id": "src_dia_2",
+      "title": "Pienso en tu mirá",
+      "artists": [
+        "Rosalía"
+      ],
+      "album": "El Mal Querer",
+      "duration_ms": 193000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_dia_2",
+        "title": "Pienso en tu mirá",
+        "artists": [
+          "Rosalía"
+        ],
+        "album": "El Mal Querer",
+        "duration_ms": 194000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_dia_2"
+  },
+  {
+    "id": "diacritic_3",
+    "category": "diacritics",
+    "source": {
+      "id": "src_dia_3",
+      "title": "Con Altura",
+      "artists": [
+        "Rosalía"
+      ],
+      "album": "Con Altura",
+      "duration_ms": 161000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_dia_3",
+        "title": "Con Altura",
+        "artists": [
+          "Rosalía"
+        ],
+        "album": "Con Altura",
+        "duration_ms": 162000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_dia_3"
+  },
+  {
+    "id": "diacritic_4",
+    "category": "diacritics",
+    "source": {
+      "id": "src_dia_4",
+      "title": "Hoppípolla",
+      "artists": [
+        "Sigur Rós"
+      ],
+      "album": "Takk...",
+      "duration_ms": 268000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_dia_4",
+        "title": "Hoppípolla",
+        "artists": [
+          "Sigur Rós"
+        ],
+        "album": "Takk...",
+        "duration_ms": 269000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_dia_4"
+  },
+  {
+    "id": "diacritic_5",
+    "category": "diacritics",
+    "source": {
+      "id": "src_dia_5",
+      "title": "Svefn-g-englar",
+      "artists": [
+        "Sigur Rós"
+      ],
+      "album": "Ágætis byrjun",
+      "duration_ms": 604000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_dia_5",
+        "title": "Svefn-g-englar",
+        "artists": [
+          "Sigur Rós"
+        ],
+        "album": "Ágætis byrjun",
+        "duration_ms": 605000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_dia_5"
+  },
+  {
+    "id": "diacritic_6",
+    "category": "diacritics",
+    "source": {
+      "id": "src_dia_6",
+      "title": "Starálfur",
+      "artists": [
+        "Sigur Rós"
+      ],
+      "album": "Ágætis byrjun",
+      "duration_ms": 406000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_dia_6",
+        "title": "Starálfur",
+        "artists": [
+          "Sigur Rós"
+        ],
+        "album": "Ágætis byrjun",
+        "duration_ms": 407000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_dia_6"
+  },
+  {
+    "id": "diacritic_7",
+    "category": "diacritics",
+    "source": {
+      "id": "src_dia_7",
+      "title": "Eres",
+      "artists": [
+        "Café Tacvba"
+      ],
+      "album": "Cuatro Caminos",
+      "duration_ms": 267000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_dia_7",
+        "title": "Eres",
+        "artists": [
+          "Café Tacvba"
+        ],
+        "album": "Cuatro Caminos",
+        "duration_ms": 268000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_dia_7"
+  },
+  {
+    "id": "diacritic_8",
+    "category": "diacritics",
+    "source": {
+      "id": "src_dia_8",
+      "title": "La Ingrata",
+      "artists": [
+        "Café Tacvba"
+      ],
+      "album": "Re",
+      "duration_ms": 211000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_dia_8",
+        "title": "La Ingrata",
+        "artists": [
+          "Café Tacvba"
+        ],
+        "album": "Re",
+        "duration_ms": 212000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_dia_8"
+  },
+  {
+    "id": "diacritic_9",
+    "category": "diacritics",
+    "source": {
+      "id": "src_dia_9",
+      "title": "Chilanga Banda",
+      "artists": [
+        "Café Tacvba"
+      ],
+      "album": "Avalancha de Éxitos",
+      "duration_ms": 212000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_dia_9",
+        "title": "Chilanga Banda",
+        "artists": [
+          "Café Tacvba"
+        ],
+        "album": "Avalancha de Éxitos",
+        "duration_ms": 213000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_dia_9"
+  },
+  {
+    "id": "diacritic_10",
+    "category": "diacritics",
+    "source": {
+      "id": "src_dia_10",
+      "title": "Jóga",
+      "artists": [
+        "Björk"
+      ],
+      "album": "Homogenic",
+      "duration_ms": 305000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_dia_10",
+        "title": "Jóga",
+        "artists": [
+          "Björk"
+        ],
+        "album": "Homogenic",
+        "duration_ms": 306000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_dia_10"
+  },
+  {
+    "id": "diacritic_11",
+    "category": "diacritics",
+    "source": {
+      "id": "src_dia_11",
+      "title": "Bachelorette",
+      "artists": [
+        "Björk"
+      ],
+      "album": "Homogenic",
+      "duration_ms": 312000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_dia_11",
+        "title": "Bachelorette",
+        "artists": [
+          "Björk"
+        ],
+        "album": "Homogenic",
+        "duration_ms": 313000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_dia_11"
+  },
+  {
+    "id": "diacritic_12",
+    "category": "diacritics",
+    "source": {
+      "id": "src_dia_12",
+      "title": "Hyperballad",
+      "artists": [
+        "Björk"
+      ],
+      "album": "Post",
+      "duration_ms": 321000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_dia_12",
+        "title": "Hyperballad",
+        "artists": [
+          "Björk"
+        ],
+        "album": "Post",
+        "duration_ms": 322000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_dia_12"
+  },
+  {
+    "id": "diacritic_13",
+    "category": "diacritics",
+    "source": {
+      "id": "src_dia_13",
+      "title": "Pour que tu m'aimes encore",
+      "artists": [
+        "Céline Dion"
+      ],
+      "album": "D'eux",
+      "duration_ms": 255000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_dia_13",
+        "title": "Pour que tu m'aimes encore",
+        "artists": [
+          "Céline Dion"
+        ],
+        "album": "D'eux",
+        "duration_ms": 256000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_dia_13"
+  },
+  {
+    "id": "diacritic_14",
+    "category": "diacritics",
+    "source": {
+      "id": "src_dia_14",
+      "title": "Moi... Lolita",
+      "artists": [
+        "Alizée"
+      ],
+      "album": "Gourmandises",
+      "duration_ms": 256000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_dia_14",
+        "title": "Moi... Lolita",
+        "artists": [
+          "Alizée"
+        ],
+        "album": "Gourmandises",
+        "duration_ms": 257000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_dia_14"
+  },
+  {
+    "id": "diacritic_15",
+    "category": "diacritics",
+    "source": {
+      "id": "src_dia_15",
+      "title": "Dákiti",
+      "artists": [
+        "Bad Bunny"
+      ],
+      "album": "El Último Tour Del Mundo",
+      "duration_ms": 205000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_dia_15",
+        "title": "Dákiti",
+        "artists": [
+          "Bad Bunny"
+        ],
+        "album": "El Último Tour Del Mundo",
+        "duration_ms": 206000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_dia_15"
+  },
+  {
+    "id": "inverted_1",
+    "category": "inverted",
+    "source": {
+      "id": "src_inv_1",
+      "title": "Around the World",
+      "artists": [
+        "Daft Punk"
+      ],
+      "album": "Transposed Collection",
+      "duration_ms": 429000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_inv_1",
+        "title": "Around the World Daft Punk",
+        "artists": [
+          "Daft Punk"
+        ],
+        "album": "Transposed Collection",
+        "duration_ms": 429500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_inv_1"
+  },
+  {
+    "id": "inverted_2",
+    "category": "inverted",
+    "source": {
+      "id": "src_inv_2",
+      "title": "Harder Better Faster Stronger",
+      "artists": [
+        "Daft Punk"
+      ],
+      "album": "Transposed Collection",
+      "duration_ms": 224000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_inv_2",
+        "title": "Harder Better Faster Stronger Daft Punk",
+        "artists": [
+          "Daft Punk"
+        ],
+        "album": "Transposed Collection",
+        "duration_ms": 224500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_inv_2"
+  },
+  {
+    "id": "inverted_3",
+    "category": "inverted",
+    "source": {
+      "id": "src_inv_3",
+      "title": "One More Time",
+      "artists": [
+        "Daft Punk"
+      ],
+      "album": "Transposed Collection",
+      "duration_ms": 320000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_inv_3",
+        "title": "One More Time Daft Punk",
+        "artists": [
+          "Daft Punk"
+        ],
+        "album": "Transposed Collection",
+        "duration_ms": 320500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_inv_3"
+  },
+  {
+    "id": "inverted_4",
+    "category": "inverted",
+    "source": {
+      "id": "src_inv_4",
+      "title": "All You Need Is Love",
+      "artists": [
+        "The Beatles"
+      ],
+      "album": "Transposed Collection",
+      "duration_ms": 227000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_inv_4",
+        "title": "The Beatles All You Need Is Love",
+        "artists": [
+          "The Beatles"
+        ],
+        "album": "Transposed Collection",
+        "duration_ms": 227500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_inv_4"
+  },
+  {
+    "id": "inverted_5",
+    "category": "inverted",
+    "source": {
+      "id": "src_inv_5",
+      "title": "Lucy In The Sky With Diamonds",
+      "artists": [
+        "The Beatles"
+      ],
+      "album": "Transposed Collection",
+      "duration_ms": 208000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_inv_5",
+        "title": "The Beatles Lucy In The Sky With Diamonds",
+        "artists": [
+          "The Beatles"
+        ],
+        "album": "Transposed Collection",
+        "duration_ms": 208500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_inv_5"
+  },
+  {
+    "id": "inverted_6",
+    "category": "inverted",
+    "source": {
+      "id": "src_inv_6",
+      "title": "A Day In The Life",
+      "artists": [
+        "The Beatles"
+      ],
+      "album": "Transposed Collection",
+      "duration_ms": 337000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_inv_6",
+        "title": "The Beatles A Day In The Life",
+        "artists": [
+          "The Beatles"
+        ],
+        "album": "Transposed Collection",
+        "duration_ms": 337500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_inv_6"
+  },
+  {
+    "id": "inverted_7",
+    "category": "inverted",
+    "source": {
+      "id": "src_inv_7",
+      "title": "Come Together",
+      "artists": [
+        "The Beatles"
+      ],
+      "album": "Transposed Collection",
+      "duration_ms": 259000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_inv_7",
+        "title": "The Beatles Come Together",
+        "artists": [
+          "The Beatles"
+        ],
+        "album": "Transposed Collection",
+        "duration_ms": 259500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_inv_7"
+  },
+  {
+    "id": "inverted_8",
+    "category": "inverted",
+    "source": {
+      "id": "src_inv_8",
+      "title": "Something",
+      "artists": [
+        "The Beatles"
+      ],
+      "album": "Transposed Collection",
+      "duration_ms": 182000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_inv_8",
+        "title": "The Beatles Something",
+        "artists": [
+          "The Beatles"
+        ],
+        "album": "Transposed Collection",
+        "duration_ms": 182500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_inv_8"
+  },
+  {
+    "id": "inverted_9",
+    "category": "inverted",
+    "source": {
+      "id": "src_inv_9",
+      "title": "Here Comes The Sun",
+      "artists": [
+        "The Beatles"
+      ],
+      "album": "Transposed Collection",
+      "duration_ms": 185000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_inv_9",
+        "title": "The Beatles Here Comes The Sun",
+        "artists": [
+          "The Beatles"
+        ],
+        "album": "Transposed Collection",
+        "duration_ms": 185500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_inv_9"
+  },
+  {
+    "id": "inverted_10",
+    "category": "inverted",
+    "source": {
+      "id": "src_inv_10",
+      "title": "Blackbird",
+      "artists": [
+        "The Beatles"
+      ],
+      "album": "Transposed Collection",
+      "duration_ms": 138000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_inv_10",
+        "title": "The Beatles Blackbird",
+        "artists": [
+          "The Beatles"
+        ],
+        "album": "Transposed Collection",
+        "duration_ms": 138500,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Exact",
+    "expected_best_id": "tgt_inv_10"
+  },
+  {
+    "id": "negative_1",
+    "category": "negative_duration",
+    "source": {
+      "id": "src_neg_1",
+      "title": "Comfortably Numb",
+      "artists": [
+        "Pink Floyd"
+      ],
+      "album": "Studio",
+      "duration_ms": 382000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_neg_1",
+        "title": "Comfortably Numb (Live at Pompeii)",
+        "artists": [
+          "Pink Floyd"
+        ],
+        "album": "Live Album",
+        "duration_ms": 450000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "NotFound",
+    "expected_best_id": null
+  },
+  {
+    "id": "negative_2",
+    "category": "negative_duration",
+    "source": {
+      "id": "src_neg_2",
+      "title": "Hotel California",
+      "artists": [
+        "Eagles"
+      ],
+      "album": "Studio",
+      "duration_ms": 391000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_neg_2",
+        "title": "Hotel California (Live on MTV)",
+        "artists": [
+          "Eagles"
+        ],
+        "album": "Live Album",
+        "duration_ms": 435000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "NotFound",
+    "expected_best_id": null
+  },
+  {
+    "id": "negative_3",
+    "category": "negative_duration",
+    "source": {
+      "id": "src_neg_3",
+      "title": "Free Bird",
+      "artists": [
+        "Lynyrd Skynyrd"
+      ],
+      "album": "Studio",
+      "duration_ms": 548000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_neg_3",
+        "title": "Free Bird (Extended Live Version)",
+        "artists": [
+          "Lynyrd Skynyrd"
+        ],
+        "album": "Live Album",
+        "duration_ms": 680000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "NotFound",
+    "expected_best_id": null
+  },
+  {
+    "id": "negative_4",
+    "category": "negative_duration",
+    "source": {
+      "id": "src_neg_4",
+      "title": "Blue Monday",
+      "artists": [
+        "New Order"
+      ],
+      "album": "Studio",
+      "duration_ms": 449000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_neg_4",
+        "title": "Blue Monday (12 Inch Maxi Mix)",
+        "artists": [
+          "New Order"
+        ],
+        "album": "Live Album",
+        "duration_ms": 520000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "NotFound",
+    "expected_best_id": null
+  },
+  {
+    "id": "negative_5",
+    "category": "negative_duration",
+    "source": {
+      "id": "src_neg_5",
+      "title": "Sultans of Swing",
+      "artists": [
+        "Dire Straits"
+      ],
+      "album": "Studio",
+      "duration_ms": 348000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_neg_5",
+        "title": "Sultans of Swing (Alchemy Live)",
+        "artists": [
+          "Dire Straits"
+        ],
+        "album": "Live Album",
+        "duration_ms": 420000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "NotFound",
+    "expected_best_id": null
+  },
+  {
+    "id": "negative_6",
+    "category": "negative_duration",
+    "source": {
+      "id": "src_neg_6",
+      "title": "Roxanne",
+      "artists": [
+        "The Police"
+      ],
+      "album": "Studio",
+      "duration_ms": 194000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_neg_6",
+        "title": "Roxanne (Live in Boston)",
+        "artists": [
+          "The Police"
+        ],
+        "album": "Live Album",
+        "duration_ms": 240000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "NotFound",
+    "expected_best_id": null
+  },
+  {
+    "id": "negative_7",
+    "category": "negative_duration",
+    "source": {
+      "id": "src_neg_7",
+      "title": "Stairway to Heaven",
+      "artists": [
+        "Led Zeppelin"
+      ],
+      "album": "Studio",
+      "duration_ms": 482000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_neg_7",
+        "title": "Stairway to Heaven (The Song Remains The Same)",
+        "artists": [
+          "Led Zeppelin"
+        ],
+        "album": "Live Album",
+        "duration_ms": 600000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "NotFound",
+    "expected_best_id": null
+  },
+  {
+    "id": "negative_8",
+    "category": "negative_duration",
+    "source": {
+      "id": "src_neg_8",
+      "title": "Smoke on the Water",
+      "artists": [
+        "Deep Purple"
+      ],
+      "album": "Studio",
+      "duration_ms": 340000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_neg_8",
+        "title": "Smoke on the Water (Made in Japan Live)",
+        "artists": [
+          "Deep Purple"
+        ],
+        "album": "Live Album",
+        "duration_ms": 440000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "NotFound",
+    "expected_best_id": null
+  },
+  {
+    "id": "negative_9",
+    "category": "negative_duration",
+    "source": {
+      "id": "src_neg_9",
+      "title": "No Woman No Cry",
+      "artists": [
+        "Bob Marley"
+      ],
+      "album": "Studio",
+      "duration_ms": 226000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_neg_9",
+        "title": "No Woman No Cry (Live at the Lyceum)",
+        "artists": [
+          "Bob Marley"
+        ],
+        "album": "Live Album",
+        "duration_ms": 425000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "NotFound",
+    "expected_best_id": null
+  },
+  {
+    "id": "negative_10",
+    "category": "negative_duration",
+    "source": {
+      "id": "src_neg_10",
+      "title": "Sweet Child O Mine",
+      "artists": [
+        "Guns N Roses"
+      ],
+      "album": "Studio",
+      "duration_ms": 356000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_neg_10",
+        "title": "Sweet Child O Mine (Live in Tokyo)",
+        "artists": [
+          "Guns N Roses"
+        ],
+        "album": "Live Album",
+        "duration_ms": 420000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "NotFound",
+    "expected_best_id": null
+  },
+  {
+    "id": "ambiguous_1",
+    "category": "ambiguous",
+    "source": {
+      "id": "src_amb_1",
+      "title": "Starboy",
+      "artists": [
+        "The Weeknd"
+      ],
+      "album": "Studio Album",
+      "duration_ms": 230000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_amb_1",
+        "title": "Starboy",
+        "artists": [
+          "The Weeknd"
+        ],
+        "album": "Radio Edit",
+        "duration_ms": 238000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Ambiguous",
+    "expected_best_id": "tgt_amb_1"
+  },
+  {
+    "id": "ambiguous_2",
+    "category": "ambiguous",
+    "source": {
+      "id": "src_amb_2",
+      "title": "Bad Guy",
+      "artists": [
+        "Billie Eilish"
+      ],
+      "album": "Studio Album",
+      "duration_ms": 194000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_amb_2",
+        "title": "Bad Guy",
+        "artists": [
+          "Billie Eilish"
+        ],
+        "album": "Radio Edit",
+        "duration_ms": 203000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Ambiguous",
+    "expected_best_id": "tgt_amb_2"
+  },
+  {
+    "id": "ambiguous_3",
+    "category": "ambiguous",
+    "source": {
+      "id": "src_amb_3",
+      "title": "Levitating",
+      "artists": [
+        "Dua Lipa"
+      ],
+      "album": "Studio Album",
+      "duration_ms": 203000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_amb_3",
+        "title": "Levitating",
+        "artists": [
+          "Dua Lipa"
+        ],
+        "album": "Radio Edit",
+        "duration_ms": 212000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Ambiguous",
+    "expected_best_id": "tgt_amb_3"
+  },
+  {
+    "id": "ambiguous_4",
+    "category": "ambiguous",
+    "source": {
+      "id": "src_amb_4",
+      "title": "Save Your Tears",
+      "artists": [
+        "The Weeknd"
+      ],
+      "album": "Studio Album",
+      "duration_ms": 215000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_amb_4",
+        "title": "Save Your Tears",
+        "artists": [
+          "The Weeknd"
+        ],
+        "album": "Radio Edit",
+        "duration_ms": 224000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Ambiguous",
+    "expected_best_id": "tgt_amb_4"
+  },
+  {
+    "id": "ambiguous_5",
+    "category": "ambiguous",
+    "source": {
+      "id": "src_amb_5",
+      "title": "Watermelon Sugar",
+      "artists": [
+        "Harry Styles"
+      ],
+      "album": "Studio Album",
+      "duration_ms": 174000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_amb_5",
+        "title": "Watermelon Sugar",
+        "artists": [
+          "Harry Styles"
+        ],
+        "album": "Radio Edit",
+        "duration_ms": 183000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Ambiguous",
+    "expected_best_id": "tgt_amb_5"
+  },
+  {
+    "id": "ambiguous_6",
+    "category": "ambiguous",
+    "source": {
+      "id": "src_amb_6",
+      "title": "As It Was",
+      "artists": [
+        "Harry Styles"
+      ],
+      "album": "Studio Album",
+      "duration_ms": 167000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_amb_6",
+        "title": "As It Was",
+        "artists": [
+          "Harry Styles"
+        ],
+        "album": "Radio Edit",
+        "duration_ms": 175000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Ambiguous",
+    "expected_best_id": "tgt_amb_6"
+  },
+  {
+    "id": "ambiguous_7",
+    "category": "ambiguous",
+    "source": {
+      "id": "src_amb_7",
+      "title": "Circles",
+      "artists": [
+        "Post Malone"
+      ],
+      "album": "Studio Album",
+      "duration_ms": 215000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_amb_7",
+        "title": "Circles",
+        "artists": [
+          "Post Malone"
+        ],
+        "album": "Radio Edit",
+        "duration_ms": 222000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Ambiguous",
+    "expected_best_id": "tgt_amb_7"
+  },
+  {
+    "id": "ambiguous_8",
+    "category": "ambiguous",
+    "source": {
+      "id": "src_amb_8",
+      "title": "Flowers",
+      "artists": [
+        "Miley Cyrus"
+      ],
+      "album": "Studio Album",
+      "duration_ms": 200000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_amb_8",
+        "title": "Flowers",
+        "artists": [
+          "Miley Cyrus"
+        ],
+        "album": "Radio Edit",
+        "duration_ms": 208000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Ambiguous",
+    "expected_best_id": "tgt_amb_8"
+  },
+  {
+    "id": "ambiguous_9",
+    "category": "ambiguous",
+    "source": {
+      "id": "src_amb_9",
+      "title": "Anti-Hero",
+      "artists": [
+        "Taylor Swift"
+      ],
+      "album": "Studio Album",
+      "duration_ms": 200000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_amb_9",
+        "title": "Anti-Hero",
+        "artists": [
+          "Taylor Swift"
+        ],
+        "album": "Radio Edit",
+        "duration_ms": 209000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Ambiguous",
+    "expected_best_id": "tgt_amb_9"
+  },
+  {
+    "id": "ambiguous_10",
+    "category": "ambiguous",
+    "source": {
+      "id": "src_amb_10",
+      "title": "Cruel Summer",
+      "artists": [
+        "Taylor Swift"
+      ],
+      "album": "Studio Album",
+      "duration_ms": 178000,
+      "isrc": null,
+      "is_explicit": false,
+      "is_playable": true
+    },
+    "candidates": [
+      {
+        "id": "tgt_amb_10",
+        "title": "Cruel Summer",
+        "artists": [
+          "Taylor Swift"
+        ],
+        "album": "Radio Edit",
+        "duration_ms": 186000,
+        "isrc": null,
+        "is_explicit": false,
+        "is_playable": true
+      }
+    ],
+    "expected_status": "Ambiguous",
+    "expected_best_id": "tgt_amb_10"
+  }
+]

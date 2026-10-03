@@ -60,6 +60,25 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
             is_rolled_back INTEGER DEFAULT 0,
             created_at INTEGER NOT NULL,
             FOREIGN KEY(job_id) REFERENCES transfer_jobs(job_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS cached_playlists (
+            id TEXT PRIMARY KEY,
+            service TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT,
+            track_count INTEGER NOT NULL,
+            is_public INTEGER NOT NULL,
+            cover_url TEXT,
+            updated_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS cached_tracks (
+            playlist_id TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            track_data TEXT NOT NULL,
+            PRIMARY KEY(playlist_id, track_id, position)
         );"
     )?;
 
@@ -89,5 +108,7 @@ mod tests {
         assert!(tables.contains(&"track_match_cache".to_string()));
         assert!(tables.contains(&"transfer_jobs".to_string()));
         assert!(tables.contains(&"transfer_snapshots".to_string()));
+        assert!(tables.contains(&"cached_playlists".to_string()));
+        assert!(tables.contains(&"cached_tracks".to_string()));
     }
 }
