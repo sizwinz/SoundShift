@@ -20,6 +20,8 @@ pub fn run() {
             auth::keyring_store::disconnect_account,
             providers::commands::list_provider_playlists,
             providers::commands::fetch_playlist_tracks,
+            providers::commands::search_provider_tracks,
+            providers::commands::resolve_track_by_url,
             engine::commands::execute_playlist_matching
         ])
         .setup(|app| {

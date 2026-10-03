@@ -202,3 +202,85 @@ pub async fn fetch_playlist_tracks(
 
     Ok(tracks)
 }
+
+/// Searches tracks on destination provider using a custom query string per DIFF-05 and D-07.
+#[tauri::command]
+pub async fn search_provider_tracks(
+    app: tauri::AppHandle,
+    service: String,
+    query: String,
+) -> Result<Vec<SourceTrack>, String> {
+    let state = app.state::<AppState>();
+    let token = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        crate::auth::keyring_store::retrieve_credential(&service, &conn)?
+            .ok_or_else(|| format!("No active session found for {}", service))?
+    };
+
+    let provider: Box<dyn MusicProvider> = match service.as_str() {
+        "spotify" => Box::new(SpotifyProvider::new(token)),
+        "ytmusic" => Box::new(YouTubeMusicProvider::new(token)),
+        _ => return Err(format!("Unsupported service: {}", service)),
+    };
+
+    provider.search_track(&query).await
+}
+
+/// Resolves a single track from a direct service URL or URI per DIFF-05 and D-07.
+#[tauri::command]
+pub async fn resolve_track_by_url(
+    app: tauri::AppHandle,
+    service: String,
+    url: String,
+) -> Result<SourceTrack, String> {
+    let trimmed = url.trim();
+
+    let extracted_id = if service == "spotify" {
+        if let Some(pos) = trimmed.find("track/") {
+            let rest = &trimmed[pos + 6..];
+            rest.split('?').next().unwrap_or(rest).to_string()
+        } else if let Some(stripped) = trimmed.strip_prefix("spotify:track:") {
+            stripped.to_string()
+        } else {
+            trimmed.to_string()
+        }
+    } else if service == "ytmusic" || service == "youtube" {
+        if let Some(pos) = trimmed.find("v=") {
+            let rest = &trimmed[pos + 2..];
+            rest.split('&').next().unwrap_or(rest).to_string()
+        } else if let Some(pos) = trimmed.find("youtu.be/") {
+            let rest = &trimmed[pos + 9..];
+            rest.split('?').next().unwrap_or(rest).to_string()
+        } else {
+            trimmed.to_string()
+        }
+    } else {
+        trimmed.to_string()
+    };
+
+    if extracted_id.is_empty() {
+        return Err("Could not extract a valid track identifier from input".to_string());
+    }
+
+    let state = app.state::<AppState>();
+    let token = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        crate::auth::keyring_store::retrieve_credential(&service, &conn)?
+            .ok_or_else(|| format!("No active session found for {}", service))?
+    };
+
+    let provider: Box<dyn MusicProvider> = match service.as_str() {
+        "spotify" => Box::new(SpotifyProvider::new(token)),
+        "ytmusic" => Box::new(YouTubeMusicProvider::new(token)),
+        _ => return Err(format!("Unsupported service: {}", service)),
+    };
+
+    let candidates = provider.search_track(&extracted_id).await?;
+    if let Some(matched) = candidates.iter().find(|t| t.id == extracted_id) {
+        Ok(matched.clone())
+    } else if let Some(first) = candidates.into_iter().next() {
+        Ok(first)
+    } else {
+        Err(format!("No track found on {} matching '{}'", service, extracted_id))
+    }
+}

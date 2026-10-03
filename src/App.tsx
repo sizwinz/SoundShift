@@ -79,6 +79,7 @@ function MainContent() {
 
                   <StagingTable
                     results={stagedResults}
+                    onUpdateResults={setStagedResults}
                     playlistTitle={activePlaylist?.title}
                     sourceService={sourceService}
                     targetService={targetService}

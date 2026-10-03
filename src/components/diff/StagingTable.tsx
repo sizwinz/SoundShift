@@ -1,12 +1,15 @@
 import React, { useRef, useMemo, useState, useEffect } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { MatchResult } from "../../types/diff";
+import { SourceTrack } from "../../types/provider";
 import { DiffRow } from "./DiffRow";
 import { FilterToolbar, FilterTab, FilterCounts } from "./FilterToolbar";
+import { DisambiguationDrawer } from "./DisambiguationDrawer";
 import { Music, CheckCircle2 } from "lucide-react";
 
 interface StagingTableProps {
   results: MatchResult[];
+  onUpdateResults?: (newResults: MatchResult[]) => void;
   onOpenDrawer?: (result: MatchResult) => void;
   selectedTrackIds?: Set<string>;
   onSelectionChange?: (selectedIds: Set<string>) => void;
@@ -17,6 +20,7 @@ interface StagingTableProps {
 
 export const StagingTable: React.FC<StagingTableProps> = ({
   results,
+  onUpdateResults,
   onOpenDrawer,
   selectedTrackIds: externalSelectedIds,
   onSelectionChange,
@@ -29,6 +33,38 @@ export const StagingTable: React.FC<StagingTableProps> = ({
   // Filter & Search state
   const [activeTab, setActiveTab] = useState<FilterTab>("all");
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Drawer state for Amber and Red row disambiguation per DIFF-03, D-05
+  const [activeDrawerTrack, setActiveDrawerTrack] = useState<MatchResult | null>(null);
+
+  const handleOpenDrawer = (result: MatchResult) => {
+    setActiveDrawerTrack(result);
+    onOpenDrawer?.(result);
+  };
+
+  const handleResolveCandidate = (sourceTrackId: string, resolvedTrack: SourceTrack) => {
+    const updatedResults = results.map((r) => {
+      if (r.source_track.id === sourceTrackId) {
+        return {
+          ...r,
+          status: "Exact" as const,
+          matched_track: resolvedTrack,
+          confidence: 1.0,
+          match_method: "manual_disambiguation",
+        };
+      }
+      return r;
+    });
+
+    const nextSelection = new Set(selectedTrackIds);
+    nextSelection.add(sourceTrackId);
+    updateSelection(nextSelection);
+
+    if (onUpdateResults) {
+      onUpdateResults(updatedResults);
+    }
+    setActiveDrawerTrack(null);
+  };
 
   // Internal selection state if not externally controlled
   const [internalSelectedIds, setInternalSelectedIds] = useState<Set<string>>(() => {
@@ -264,7 +300,7 @@ export const StagingTable: React.FC<StagingTableProps> = ({
                     isSelected={isSelected}
                     isDuplicate={isDuplicate}
                     onToggleSelect={handleToggleSelect}
-                    onOpenDrawer={onOpenDrawer}
+                    onOpenDrawer={handleOpenDrawer}
                   />
                 </div>
               );
@@ -272,6 +308,15 @@ export const StagingTable: React.FC<StagingTableProps> = ({
           </div>
         )}
       </div>
+
+      {/* Disambiguation Drawer for Amber and Red tracks per DIFF-03, DIFF-05, D-05 */}
+      <DisambiguationDrawer
+        matchResult={activeDrawerTrack}
+        targetService={targetService || "ytmusic"}
+        isOpen={Boolean(activeDrawerTrack)}
+        onClose={() => setActiveDrawerTrack(null)}
+        onResolve={handleResolveCandidate}
+      />
     </div>
   );
 };
