@@ -38,12 +38,38 @@ pub fn parse_spotify_cookie(cookies: &[RawCookie]) -> Option<String> {
         .map(|c| c.value.clone())
 }
 
-/// Extracts the YouTube Music session cookie `SAPISID` or `__Secure-3PAPISID`.
+/// Extracts the YouTube Music session cookies (full cookie string containing SAPISID, SID/HSID/SSID).
 pub fn parse_ytmusic_cookie(cookies: &[RawCookie]) -> Option<String> {
-    cookies
+    // 1. Must contain SAPISID or __Secure-3PAPISID to calculate SAPISIDHASH
+    let has_sapisid = cookies
         .iter()
-        .find(|c| c.name == "SAPISID" || c.name == "__Secure-3PAPISID")
-        .map(|c| c.value.clone())
+        .any(|c| c.name == "SAPISID" || c.name == "__Secure-3PAPISID");
+    if !has_sapisid {
+        return None;
+    }
+
+    // 2. Must contain an authenticated Google session cookie (SID, HSID, SSID, or __Secure-3PSID)
+    let is_authenticated = cookies.iter().any(|c| {
+        c.name == "SID"
+            || c.name == "HSID"
+            || c.name == "SSID"
+            || c.name == "__Secure-3PSID"
+            || c.name == "__Secure-1PSID"
+    });
+    if !is_authenticated {
+        return None;
+    }
+
+    // 3. Serialize all non-empty cookies into a deduplicated Cookie header string
+    let mut seen = std::collections::HashSet::new();
+    let mut parts = Vec::new();
+    for c in cookies {
+        if !c.value.is_empty() && seen.insert(c.name.clone()) {
+            parts.push(format!("{}={}", c.name, c.value));
+        }
+    }
+
+    Some(parts.join("; "))
 }
 
 #[cfg(test)]
@@ -123,6 +149,20 @@ mod tests {
         ];
 
         let token = parse_ytmusic_cookie(&cookies);
-        assert_eq!(token, Some("sapisid_secret_456".into()));
+        assert_eq!(token, Some("HSID=hsid123; SAPISID=sapisid_secret_456".into()));
+
+        // Reject if SAPISID is present but no session cookie
+        let unauthenticated = vec![RawCookie {
+            name: "SAPISID".into(),
+            value: "sapisid_only".into(),
+        }];
+        assert_eq!(parse_ytmusic_cookie(&unauthenticated), None);
+
+        // Reject if session cookie is present but no SAPISID
+        let no_sapisid = vec![RawCookie {
+            name: "SID".into(),
+            value: "sid_only".into(),
+        }];
+        assert_eq!(parse_ytmusic_cookie(&no_sapisid), None);
     }
 }

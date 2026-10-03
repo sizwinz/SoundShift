@@ -5,17 +5,41 @@ use async_trait::async_trait;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, COOKIE, USER_AGENT};
 use serde_json::{json, Value};
 
+#[derive(Clone)]
 pub struct YouTubeMusicProvider {
     client: reqwest::Client,
+    cookie_str: String,
     sapisid: String,
 }
 
 impl YouTubeMusicProvider {
-    pub fn new(sapisid: String) -> Self {
+    pub fn new(token: String) -> Self {
+        let (cookie_str, sapisid) = if token.contains('=') {
+            let extracted = token
+                .split(';')
+                .find_map(|part| {
+                    let mut kv = part.trim().splitn(2, '=');
+                    let k = kv.next()?.trim();
+                    let v = kv.next()?.trim();
+                    if k == "SAPISID" || k == "__Secure-3PAPISID" {
+                        Some(v.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| token.clone());
+            (token, extracted)
+        } else {
+            let cookie_str = format!("SAPISID={}; __Secure-3PAPISID={}", token, token);
+            let sapisid = token;
+            (cookie_str, sapisid)
+        };
+
         Self {
             client: reqwest::Client::builder()
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
+            cookie_str,
             sapisid,
         }
     }
@@ -31,19 +55,16 @@ impl YouTubeMusicProvider {
         );
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         headers.insert("X-Origin", HeaderValue::from_static("https://music.youtube.com"));
+        headers.insert("X-Goog-AuthUser", HeaderValue::from_static("0"));
 
-        let cookie_val = format!(
-            "SAPISID={}; __Secure-3PAPISID={}",
-            self.sapisid, self.sapisid
-        );
-        if let Ok(c) = HeaderValue::from_str(&cookie_val) {
+        if let Ok(c) = HeaderValue::from_str(&self.cookie_str) {
             headers.insert(COOKIE, c);
         }
 
         headers.insert(
             USER_AGENT,
             HeaderValue::from_static(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
             ),
         );
 
@@ -615,5 +636,33 @@ mod tests {
         assert_eq!(YouTubeMusicProvider::parse_duration_to_ms("0:30"), 30_000);
         assert_eq!(YouTubeMusicProvider::parse_duration_to_ms("1:02:15"), 3_735_000);
         assert_eq!(YouTubeMusicProvider::parse_duration_to_ms("45"), 45_000);
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_live_ytmusic_diag() {
+        let app_data = std::env::var("APPDATA").unwrap_or_default();
+        let db_path = format!("{}\\com.soundshift.app\\soundshift.db", app_data);
+        if let Ok(conn) = rusqlite::Connection::open_with_flags(
+            &db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        ) {
+            if let Ok(Some(token)) = crate::auth::keyring_store::retrieve_credential("ytmusic", &conn) {
+                println!("FOUND YTMUSIC TOKEN (len={})", token.len());
+                let provider = YouTubeMusicProvider::new(token);
+                println!("Calling list_playlists...");
+                match provider.list_playlists().await {
+                    Ok(playlists) => {
+                        println!("LIST_PLAYLISTS SUCCESS! Found {} playlists", playlists.len());
+                        for (i, p) in playlists.iter().enumerate() {
+                            println!("  #{}: title='{}', tracks={}, id={}", i + 1, p.title, p.track_count, p.id);
+                        }
+                    }
+                    Err(e) => println!("LIST_PLAYLISTS ERROR: {}", e),
+                }
+            } else {
+                println!("NO YTMUSIC CREDENTIAL IN DB!");
+            }
+        }
     }
 }

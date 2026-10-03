@@ -177,7 +177,11 @@ pub async fn check_auth(app: tauri::AppHandle, service: String) -> Result<serde_
         })),
         Some(token) => {
             let is_valid = match service.as_str() {
-                "ytmusic" => !token.trim().is_empty(),
+                "ytmusic" => {
+                    !token.trim().is_empty()
+                        && token.contains('=')
+                        && (token.contains("SAPISID") || token.contains("__Secure-3PAPISID"))
+                }
                 "spotify" => !token.trim().is_empty(),
                 _ => false,
             };

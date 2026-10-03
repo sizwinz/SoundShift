@@ -71,6 +71,8 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
       setPlaylists(data);
       if (data.length > 0 && (!selectedPlaylist || !data.some((p) => p.id === selectedPlaylist.id))) {
         setSelectedPlaylist(data[0]);
+      } else if (data.length === 0) {
+        setSelectedPlaylist(null);
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -81,7 +83,6 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
     } finally {
       setIsLoadingPlaylists(false);
     }
-
   };
 
   useEffect(() => {
@@ -90,8 +91,12 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
 
   // Handle service switch
   const handleSourceChange = (newSource: string) => {
+    if (newSource === sourceService) return;
     setSourceService(newSource);
     setTargetService(newSource === "spotify" ? "ytmusic" : "spotify");
+    setSelectedPlaylist(null);
+    setPlaylists([]);
+    setPlaylistError(null);
   };
 
   // Run ingestion and deterministic matching

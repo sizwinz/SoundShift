@@ -77,6 +77,26 @@ pub async fn open_auth_window(app: tauri::AppHandle, service: String) -> Result<
                     }
                 }
 
+                // If service is ytmusic, also inspect www.youtube.com and accounts.google.com for Google session cookies
+                if service_id == "ytmusic" {
+                    if let Ok(yt_url) = "https://www.youtube.com".parse::<Url>() {
+                        if let Ok(yt_cookies) = w.cookies_for_url(yt_url) {
+                            raw_cookies.extend(yt_cookies.into_iter().map(|c| RawCookie {
+                                name: c.name().to_string(),
+                                value: c.value().to_string(),
+                            }));
+                        }
+                    }
+                    if let Ok(google_url) = "https://accounts.google.com".parse::<Url>() {
+                        if let Ok(google_cookies) = w.cookies_for_url(google_url) {
+                            raw_cookies.extend(google_cookies.into_iter().map(|c| RawCookie {
+                                name: c.name().to_string(),
+                                value: c.value().to_string(),
+                            }));
+                        }
+                    }
+                }
+
                 let captured_token = match service_id.as_str() {
                     "ytmusic" => parse_ytmusic_cookie(&raw_cookies),
                     "spotify" => parse_spotify_cookie(&raw_cookies),
