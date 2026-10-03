@@ -1,4 +1,10 @@
-# SoundShift
+<div align="center">
+  <img src="app-icon.png" alt="SoundShift Logo" width="128" height="128" />
+  <h1>SoundShift</h1>
+  <p><strong>Deterministic, zero-DevTools local-first playlist migration and backup</strong></p>
+</div>
+
+---
 
 SoundShift is an open-source, local-first desktop application engineered to migrate, synchronize, and back up music playlists across streaming services (Spotify and YouTube Music).
 

@@ -79,6 +79,11 @@ export function Titlebar() {
         data-tauri-drag-region
         className="flex items-center gap-2.5 flex-1 h-full cursor-default"
       >
+        <img
+          src="/app-logo.png"
+          alt="SoundShift"
+          className="w-4 h-4 object-contain"
+        />
         <span className="font-mono text-xs font-bold tracking-widest text-zinc-200">
           SOUNDSHIFT
         </span>

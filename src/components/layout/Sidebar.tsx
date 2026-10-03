@@ -69,12 +69,28 @@ export function Sidebar({
       }`}
     >
       <div>
-        {/* Toggle Collapse Button */}
-        <div className="flex items-center justify-end p-2 border-b border-[#27272a]/50">
+        {/* Sidebar Header with Logo & Toggle Collapse Button */}
+        <div
+          className={`flex items-center p-2 border-b border-[#27272a]/50 ${
+            isCollapsed ? "justify-center" : "justify-between"
+          }`}
+        >
+          {!isCollapsed && (
+            <div className="flex items-center gap-2 pl-1">
+              <img
+                src="/app-logo.png"
+                alt="SoundShift"
+                className="w-5 h-5 object-contain"
+              />
+              <span className="font-mono text-xs font-bold tracking-wider text-zinc-200">
+                SoundShift
+              </span>
+            </div>
+          )}
           <button
             type="button"
             onClick={() => setIsCollapsed(!isCollapsed)}
-            className="p-1 text-zinc-400 hover:text-zinc-200 hover:bg-[#18181b] rounded transition-colors"
+            className="p-1 text-zinc-400 hover:text-zinc-200 hover:bg-[#18181b] rounded transition-colors cursor-pointer"
             title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
             aria-label={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
           >
