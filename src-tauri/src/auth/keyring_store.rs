@@ -247,18 +247,18 @@ mod tests {
         let encrypted = encrypt_aes_gcm(secret).expect("encrypt");
         conn.execute(
             "INSERT OR REPLACE INTO service_sessions (service_id, auth_data, updated_at) VALUES (?1, ?2, ?3)",
-            params!["ytmusic", format!("encrypted:{}", encrypted), 1000],
+            params!["test_ytmusic_service", format!("encrypted:{}", encrypted), 1000],
         ).expect("insert session");
 
         // Retrieve and verify
-        let retrieved = retrieve_credential("ytmusic", &conn).expect("retrieve");
+        let retrieved = retrieve_credential("test_ytmusic_service", &conn).expect("retrieve");
         assert_eq!(retrieved, Some(secret.to_string()));
 
         // Purge credential
-        purge_credential("ytmusic", &conn).expect("purge");
+        purge_credential("test_ytmusic_service", &conn).expect("purge");
 
         // Verify session deleted
-        let retrieved_after = retrieve_credential("ytmusic", &conn).expect("retrieve after purge");
+        let retrieved_after = retrieve_credential("test_ytmusic_service", &conn).expect("retrieve after purge");
         assert_eq!(retrieved_after, None);
 
         // Verify track_match_cache preserved intact (D-04)
@@ -278,13 +278,13 @@ mod tests {
         create_tables(&conn).expect("create tables");
 
         let secret = "AQB-sample-sp_dc-token-123456789";
-        store_credential("spotify", secret, &conn).expect("store credential");
-        let retrieved = retrieve_credential("spotify", &conn).expect("retrieve credential");
+        store_credential("test_spotify_service", secret, &conn).expect("store credential");
+        let retrieved = retrieve_credential("test_spotify_service", &conn).expect("retrieve credential");
         assert_eq!(retrieved, Some(secret.to_string()));
 
         // Clean up
-        purge_credential("spotify", &conn).expect("purge");
-        assert_eq!(retrieve_credential("spotify", &conn).expect("retrieve"), None);
+        purge_credential("test_spotify_service", &conn).expect("purge");
+        assert_eq!(retrieve_credential("test_spotify_service", &conn).expect("retrieve"), None);
     }
 
     #[test]

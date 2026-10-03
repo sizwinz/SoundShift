@@ -23,7 +23,7 @@ impl SpotifyProvider {
         }
     }
 
-    /// Obtains an active bearer access token, exchanging sp_dc session cookie when needed.
+    /// Obtains an active bearer access token, exchanging sp_dc session cookie via Spotify Web Player TOTP.
     pub async fn get_access_token(&self) -> Result<String, String> {
         {
             let read_guard = self.access_token.read().await;
@@ -39,6 +39,24 @@ impl SpotifyProvider {
             return Ok(self.sp_dc.clone());
         }
 
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
+        // Synchronize with Spotify server time for exact clock alignment
+        let mut server_time_secs = now_ms / 1000;
+        if let Ok(time_res) = self.client.get("https://open.spotify.com/api/server-time").send().await {
+            if let Ok(time_json) = time_res.json::<Value>().await {
+                if let Some(st) = time_json["serverTime"].as_u64() {
+                    server_time_secs = st;
+                }
+            }
+        }
+
+        let totp = generate_spotify_totp(now_ms);
+        let server_totp = generate_spotify_totp(server_time_secs * 1000);
+
         let mut headers = HeaderMap::new();
         let cookie_str = format!("sp_dc={}", self.sp_dc);
         if let Ok(val) = HeaderValue::from_str(&cookie_str) {
@@ -50,21 +68,36 @@ impl SpotifyProvider {
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             ),
         );
+        headers.insert(
+            reqwest::header::REFERER,
+            HeaderValue::from_static("https://open.spotify.com/"),
+        );
+        headers.insert(
+            reqwest::header::ORIGIN,
+            HeaderValue::from_static("https://open.spotify.com"),
+        );
+        headers.insert(
+            reqwest::header::ACCEPT,
+            HeaderValue::from_static("application/json"),
+        );
 
-        let url = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player";
+        let url = format!(
+            "https://open.spotify.com/api/token?reason=init&productType=web_player&totp={}&totpServer={}&totpVer=61",
+            totp, server_totp
+        );
+
         let res = self
             .client
-            .get(url)
+            .get(&url)
             .headers(headers)
             .send()
             .await
             .map_err(|e| format!("Spotify token exchange request failed: {}", e))?;
 
         if !res.status().is_success() {
-            // Fall back to treating sp_dc as bearer if request rejected
-            let mut write_guard = self.access_token.write().await;
-            *write_guard = Some(self.sp_dc.clone());
-            return Ok(self.sp_dc.clone());
+            let status = res.status();
+            let body = res.text().await.unwrap_or_default();
+            return Err(format!("Spotify token exchange error ({}): {}", status, body));
         }
 
         let json: Value = res
@@ -480,5 +513,76 @@ impl MusicProvider for SpotifyProvider {
 mod urlencoding {
     pub fn encode(data: &str) -> String {
         url::form_urlencoded::byte_serialize(data.as_bytes()).collect()
+    }
+}
+
+fn hmac_sha1(key: &[u8], data: &[u8]) -> [u8; 20] {
+    use sha1::{Digest, Sha1};
+    let mut k_block = [0u8; 64];
+    if key.len() > 64 {
+        let mut hasher = Sha1::new();
+        hasher.update(key);
+        let hashed = hasher.finalize();
+        k_block[..20].copy_from_slice(&hashed);
+    } else {
+        k_block[..key.len()].copy_from_slice(key);
+    }
+
+    let mut k_ipad = [0u8; 64];
+    let mut k_opad = [0u8; 64];
+    for i in 0..64 {
+        k_ipad[i] = k_block[i] ^ 0x36;
+        k_opad[i] = k_block[i] ^ 0x5c;
+    }
+
+    let mut inner = Sha1::new();
+    inner.update(&k_ipad);
+    inner.update(data);
+    let inner_hash = inner.finalize();
+
+    let mut outer = Sha1::new();
+    outer.update(&k_opad);
+    outer.update(&inner_hash);
+    let outer_hash = outer.finalize();
+
+    let mut result = [0u8; 20];
+    result.copy_from_slice(&outer_hash);
+    result
+}
+
+fn derive_spotify_totp_key() -> Vec<u8> {
+    const RAW_SECRET: &str = ",7/*F(\"rLJ2oxaKL^f+E1xvP@N";
+    let mut num_str = String::new();
+    for (idx, ch) in RAW_SECRET.chars().enumerate() {
+        let val = (ch as u32) ^ ((idx as u32 % 33) + 9);
+        num_str.push_str(&val.to_string());
+    }
+    num_str.into_bytes()
+}
+
+pub fn generate_spotify_totp(timestamp_ms: u64) -> String {
+    let key = derive_spotify_totp_key();
+    let counter = timestamp_ms / 1000 / 30;
+    let data = counter.to_be_bytes();
+    let digest = hmac_sha1(&key, &data);
+
+    let offset = (digest[19] & 0x0f) as usize;
+    let binary = ((digest[offset] as u32 & 0x7f) << 24)
+        | ((digest[offset + 1] as u32) << 16)
+        | ((digest[offset + 2] as u32) << 8)
+        | (digest[offset + 3] as u32);
+
+    let otp = binary % 1_000_000;
+    format!("{:06}", otp)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_spotify_totp_vector() {
+        let totp = generate_spotify_totp(1791023811000);
+        assert_eq!(totp, "237400");
     }
 }
