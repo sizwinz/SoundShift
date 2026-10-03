@@ -64,6 +64,12 @@ pub struct TransferControl {
     pub pause_notify: Arc<Notify>,
 }
 
+impl Default for TransferControl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TransferControl {
     pub fn new() -> Self {
         Self {
@@ -347,7 +353,7 @@ impl TransferWorkerPool {
 
                         let start = std::time::Instant::now();
                         let res = provider
-                            .add_tracks_to_playlist(&target_id, &[track.id.clone()])
+                            .add_tracks_to_playlist(&target_id, std::slice::from_ref(&track.id))
                             .await;
                         let latency_ms = start.elapsed().as_millis() as u64;
 

@@ -218,7 +218,7 @@ pub async fn execute_snapshot_rollback(
     };
 
     crate::engine::snapshot::rollback_snapshot(
-        &*state.db,
+        &state.db,
         &snapshot_id,
         delete_entire_playlist,
         target_provider.as_ref(),

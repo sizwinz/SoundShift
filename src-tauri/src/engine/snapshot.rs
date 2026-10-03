@@ -43,6 +43,7 @@ pub struct TransferHistoryEntry {
 }
 
 /// Transactionally records transfer job and pre-mutation snapshot into SQLite before any mutations.
+#[allow(clippy::too_many_arguments)]
 pub fn create_pre_mutation_snapshot(
     conn: &rusqlite::Connection,
     job_id: &str,
@@ -266,10 +267,8 @@ pub fn get_transfer_history(conn: &rusqlite::Connection) -> Result<Vec<TransferH
         .map_err(|e| format!("Failed to read history query: {}", e))?;
 
     let mut entries = Vec::new();
-    for row in rows {
-        if let Ok(entry) = row {
-            entries.push(entry);
-        }
+    for entry in rows.flatten() {
+        entries.push(entry);
     }
 
     Ok(entries)

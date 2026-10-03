@@ -242,7 +242,7 @@ impl SpotifyProvider {
     pub fn parse_pathfinder_track(data: &Value, fallback_uri: Option<&str>) -> Option<SourceTrack> {
         let uri = data["uri"]
             .as_str()
-            .or_else(|| fallback_uri)
+            .or(fallback_uri)
             .unwrap_or("");
 
         let id = if let Some(stripped) = uri.strip_prefix("spotify:track:") {
@@ -886,13 +886,13 @@ fn hmac_sha1(key: &[u8], data: &[u8]) -> [u8; 20] {
     }
 
     let mut inner = Sha1::new();
-    inner.update(&k_ipad);
+    inner.update(k_ipad);
     inner.update(data);
     let inner_hash = inner.finalize();
 
     let mut outer = Sha1::new();
-    outer.update(&k_opad);
-    outer.update(&inner_hash);
+    outer.update(k_opad);
+    outer.update(inner_hash);
     let outer_hash = outer.finalize();
 
     let mut result = [0u8; 20];

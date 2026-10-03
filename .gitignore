@@ -1,6 +1,61 @@
-.planning/
+# Dependencies
 node_modules/
+.pnp
+.pnp.js
+
+# Production build outputs
 dist/
+dist-ssr/
+*.local
+
+# Tauri build artifacts
+src-tauri/target/
 target/
+src-tauri/WixTools/
+src-tauri/gen/schemas/*.custom.json
+
+# Local databases and application state
+*.db
+*.db-journal
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Environment files and credentials
 .env
 .env.*
+!.env.example
+
+# Temporary agent, planning, and task files
+.planning/
+.kilo/
+.gemini/
+
+# IDE and Editor settings
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+
+# OS metadata
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*

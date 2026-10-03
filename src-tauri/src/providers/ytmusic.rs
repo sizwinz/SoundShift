@@ -168,17 +168,17 @@ impl YouTubeMusicProvider {
             }
         }
 
-        let is_explicit = renderer["badges"].as_array().map_or(false, |badges| {
+        let is_explicit = renderer["badges"].as_array().is_some_and(|badges| {
             badges.iter().any(|b| {
                 b["musicInlineBadgeRenderer"]["icon"]["iconType"]
                     .as_str()
-                    .map_or(false, |icon| icon.contains("EXPLICIT"))
+                    .is_some_and(|icon| icon.contains("EXPLICIT"))
             })
         });
 
         let is_playable = !renderer["musicItemRendererDisplayPolicy"]
             .as_str()
-            .map_or(false, |policy| policy.contains("GREY_OUT") || policy.contains("DISABLED"));
+            .is_some_and(|policy| policy.contains("GREY_OUT") || policy.contains("DISABLED"));
 
         let thumbnail_url = renderer["thumbnail"]["musicThumbnailRenderer"]["thumbnail"]["thumbnails"]
             .as_array()
