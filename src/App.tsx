@@ -4,8 +4,11 @@ import { Sidebar, NavTab } from "./components/layout/Sidebar";
 import { AccountManager } from "./components/accounts/AccountManager";
 import { PlaylistSelector } from "./components/playlists/PlaylistSelector";
 import { StagingTable } from "./components/diff/StagingTable";
+import { TransferTargetOptions } from "./components/diff/TransferConfirmModal";
+import { TelemetryDrawer } from "./components/transfer/TelemetryDrawer";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { AudioProvider } from "./context/AudioContext";
+import { TransferProvider, useTransfer } from "./context/TransferContext";
 import { MatchResult } from "./types/diff";
 import { Playlist } from "./types/provider";
 import { ArrowRight, Music } from "lucide-react";
@@ -13,6 +16,7 @@ import { ArrowRight, Music } from "lucide-react";
 function MainContent() {
   const [activeTab, setActiveTab] = useState<NavTab>("accounts");
   const { ytStatus, spotifyStatus } = useAuth();
+  const { startTransfer } = useTransfer();
 
   // Staged transfer data state
   const [stagedResults, setStagedResults] = useState<MatchResult[]>([]);
@@ -33,8 +37,29 @@ function MainContent() {
     setActiveTab("transfers");
   };
 
+  const handleConfirmTransfer = (
+    selectedTracks: MatchResult[],
+    options: TransferTargetOptions
+  ) => {
+    const tracksToTransfer = selectedTracks
+      .map((r) => r.matched_track || r.source_track)
+      .filter(Boolean);
+
+    startTransfer({
+      job_id: `job_${Date.now()}`,
+      source_service: sourceService,
+      target_service: targetService,
+      source_playlist_name: activePlaylist?.title || "Playlist",
+      target_playlist_name: options.playlistName,
+      target_playlist_id: options.targetPlaylistId,
+      is_new_playlist: options.isNewPlaylist,
+      tracks: tracksToTransfer,
+      concurrency: options.concurrency,
+    });
+  };
+
   return (
-    <div className="flex flex-col h-screen w-screen bg-[#000000] text-zinc-100 overflow-hidden font-sans">
+    <div className="flex flex-col h-screen w-screen bg-[#000000] text-zinc-100 overflow-hidden font-sans relative">
       {/* Custom Frameless Titlebar */}
       <Titlebar />
 
@@ -49,7 +74,7 @@ function MainContent() {
         />
 
         {/* Content Viewport */}
-        <main className="flex-1 overflow-y-auto bg-[#000000] p-6">
+        <main className="flex-1 overflow-y-auto bg-[#000000] p-6 pb-20">
           <div className="max-w-5xl mx-auto">
             {activeTab === "accounts" && <AccountManager />}
 
@@ -81,6 +106,7 @@ function MainContent() {
                   <StagingTable
                     results={stagedResults}
                     onUpdateResults={setStagedResults}
+                    onConfirmTransfer={handleConfirmTransfer}
                     playlistTitle={activePlaylist?.title}
                     sourceService={sourceService}
                     targetService={targetService}
@@ -118,6 +144,9 @@ function MainContent() {
           </div>
         </main>
       </div>
+
+      {/* Global Minimizable Telemetry Drawer pinned at bottom */}
+      <TelemetryDrawer onNavigateToHistory={() => setActiveTab("transfers")} />
     </div>
   );
 }
@@ -126,7 +155,9 @@ export default function App() {
   return (
     <AuthProvider>
       <AudioProvider>
-        <MainContent />
+        <TransferProvider>
+          <MainContent />
+        </TransferProvider>
       </AudioProvider>
     </AuthProvider>
   );

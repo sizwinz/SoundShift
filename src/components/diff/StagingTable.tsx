@@ -6,14 +6,14 @@ import { DiffRow } from "./DiffRow";
 import { FilterToolbar, FilterTab, FilterCounts } from "./FilterToolbar";
 import { DisambiguationDrawer } from "./DisambiguationDrawer";
 import { StagingActionBar } from "./StagingActionBar";
-import { TransferConfirmModal } from "./TransferConfirmModal";
+import { TransferConfirmModal, TransferTargetOptions } from "./TransferConfirmModal";
 import { Music, CheckCircle2 } from "lucide-react";
 
 interface StagingTableProps {
   results: MatchResult[];
   onUpdateResults?: (newResults: MatchResult[]) => void;
   onOpenDrawer?: (result: MatchResult) => void;
-  onConfirmTransfer?: (selectedTracks: MatchResult[]) => void;
+  onConfirmTransfer?: (selectedTracks: MatchResult[], options: TransferTargetOptions) => void;
   selectedTrackIds?: Set<string>;
   onSelectionChange?: (selectedIds: Set<string>) => void;
   playlistTitle?: string;
@@ -386,10 +386,10 @@ export const StagingTable: React.FC<StagingTableProps> = ({
       <TransferConfirmModal
         isOpen={isConfirmModalOpen}
         onClose={() => setIsConfirmModalOpen(false)}
-        onConfirm={() => {
+        onConfirm={(targetOptions) => {
           setIsConfirmModalOpen(false);
           const selectedTracks = results.filter((r) => selectedTrackIds.has(r.source_track.id));
-          onConfirmTransfer?.(selectedTracks);
+          onConfirmTransfer?.(selectedTracks, targetOptions);
         }}
         playlistTitle={playlistTitle}
         targetService={targetService || "ytmusic"}
