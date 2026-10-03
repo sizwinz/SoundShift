@@ -92,32 +92,25 @@ pub fn store_credential(service: &str, secret: &str, conn: &Connection) -> Resul
         .unwrap_or_default()
         .as_secs() as i64;
 
-    // Try primary OS Keyring storage first
-    let keyring_result = Entry::new(SERVICE_NAME, service).and_then(|e| e.set_password(secret));
-
-    match keyring_result {
-        Ok(_) => {
-            // Also record active session in SQLite with reference marker
-            let _ = conn.execute(
-                "INSERT OR REPLACE INTO service_sessions (service_id, auth_data, updated_at) VALUES (?1, ?2, ?3)",
-                params![service, "keyring:managed", now],
-            );
-            Ok(())
-        }
-        Err(_) => {
-            // D-03: Transparent AES-256-GCM SQLite fallback
-            let encrypted = encrypt_aes_gcm(secret)?;
-            conn.execute(
-                "INSERT OR REPLACE INTO service_sessions (service_id, auth_data, updated_at) VALUES (?1, ?2, ?3)",
-                params![service, format!("encrypted:{}", encrypted), now],
-            ).map_err(|e| e.to_string())?;
-            Ok(())
-        }
+    // 1. Primary OS Keyring storage (AUTH-04)
+    if let Ok(entry) = Entry::new(SERVICE_NAME, service) {
+        let _ = entry.set_password(secret);
     }
+
+    // 2. Transparent AES-256-GCM encrypted fallback in SQLite storage (D-03)
+    let encrypted = encrypt_aes_gcm(secret)?;
+    conn.execute(
+        "INSERT OR REPLACE INTO service_sessions (service_id, auth_data, updated_at) VALUES (?1, ?2, ?3)",
+        params![service, format!("encrypted:{}", encrypted), now],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
 /// Retrieves stored credentials, checking OS Keyring first, then SQLite fallback.
 pub fn retrieve_credential(service: &str, conn: &Connection) -> Result<Option<String>, String> {
+    // 1. Primary check: platform OS Keyring
     if let Ok(entry) = Entry::new(SERVICE_NAME, service) {
         if let Ok(password) = entry.get_password() {
             if !password.is_empty() {
@@ -126,7 +119,7 @@ pub fn retrieve_credential(service: &str, conn: &Connection) -> Result<Option<St
         }
     }
 
-    // Fall back to SQLite database lookup
+    // 2. Fall back to SQLite database lookup
     let mut stmt = conn
         .prepare("SELECT auth_data FROM service_sessions WHERE service_id = ?1")
         .map_err(|e| e.to_string())?;
@@ -139,7 +132,7 @@ pub fn retrieve_credential(service: &str, conn: &Connection) -> Result<Option<St
                 let decrypted = decrypt_aes_gcm(encrypted_part)?;
                 Ok(Some(decrypted))
             } else if data == "keyring:managed" {
-                // Keyring was deleted externally
+                // Keyring was deleted externally or cleared
                 Ok(None)
             } else {
                 Ok(Some(data))
@@ -278,4 +271,38 @@ mod tests {
             .expect("query cache count");
         assert_eq!(cache_count, 1);
     }
+
+    #[test]
+    fn test_store_and_retrieve_credential() {
+        let conn = Connection::open_in_memory().expect("open memory db");
+        create_tables(&conn).expect("create tables");
+
+        let secret = "AQB-sample-sp_dc-token-123456789";
+        store_credential("spotify", secret, &conn).expect("store credential");
+        let retrieved = retrieve_credential("spotify", &conn).expect("retrieve credential");
+        assert_eq!(retrieved, Some(secret.to_string()));
+
+        // Clean up
+        purge_credential("spotify", &conn).expect("purge");
+        assert_eq!(retrieve_credential("spotify", &conn).expect("retrieve"), None);
+    }
+
+    #[test]
+    fn test_sqlite_fallback_when_keyring_fails() {
+        let conn = Connection::open_in_memory().expect("open memory db");
+        create_tables(&conn).expect("create tables");
+
+        let secret = "fallback_secret_xyz_987";
+        let encrypted = encrypt_aes_gcm(secret).expect("encrypt");
+        conn.execute(
+            "INSERT INTO service_sessions (service_id, auth_data, updated_at) VALUES (?1, ?2, ?3)",
+            params!["mock_nonexistent_service", format!("encrypted:{}", encrypted), 1000],
+        ).expect("insert session");
+
+        let retrieved = retrieve_credential("mock_nonexistent_service", &conn)
+            .expect("retrieve from sqlite fallback");
+        assert_eq!(retrieved, Some(secret.to_string()));
+    }
 }
+
+

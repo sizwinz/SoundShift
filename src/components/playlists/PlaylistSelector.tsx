@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { Playlist } from "../../types/provider";
 import { MatchResult, MatchingProgressPayload } from "../../types/diff";
+import { ServiceId } from "../../types/auth";
 import { useAuth } from "../../context/AuthContext";
 import {
   Music,
@@ -28,7 +29,8 @@ interface PlaylistSelectorProps {
 export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
   onMatchComplete,
 }) => {
-  const { ytStatus, spotifyStatus } = useAuth();
+  const { ytStatus, spotifyStatus, checkStatus } = useAuth();
+
 
   const [sourceService, setSourceService] = useState<string>("spotify");
   const [targetService, setTargetService] = useState<string>("ytmusic");
@@ -71,10 +73,15 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
         setSelectedPlaylist(data[0]);
       }
     } catch (err: unknown) {
-      setPlaylistError(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      setPlaylistError(message);
+      if (message.toLowerCase().includes("no active session")) {
+        checkStatus(sourceService as ServiceId);
+      }
     } finally {
       setIsLoadingPlaylists(false);
     }
+
   };
 
   useEffect(() => {

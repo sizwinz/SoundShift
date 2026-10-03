@@ -56,46 +56,58 @@ pub async fn open_auth_window(app: tauri::AppHandle, service: String) -> Result<
 
             // Check if window was closed by the user
             if let Some(w) = app_handle.get_webview_window(&format!("auth-{}", service_id)) {
-                let cookies_result = w.cookies_for_url(parsed_url.clone());
-                if let Ok(cookies) = cookies_result {
-                    let raw_cookies: Vec<RawCookie> = cookies
-                        .into_iter()
-                        .map(|c| RawCookie {
-                            name: c.name().to_string(),
-                            value: c.value().to_string(),
-                        })
-                        .collect();
+                let mut raw_cookies: Vec<RawCookie> = Vec::new();
 
-                    let captured_token = match service_id.as_str() {
-                        "ytmusic" => parse_ytmusic_cookie(&raw_cookies),
-                        "spotify" => parse_spotify_cookie(&raw_cookies),
-                        _ => None,
-                    };
+                if let Ok(cookies) = w.cookies_for_url(parsed_url.clone()) {
+                    raw_cookies.extend(cookies.into_iter().map(|c| RawCookie {
+                        name: c.name().to_string(),
+                        value: c.value().to_string(),
+                    }));
+                }
 
-                    if let Some(token) = captured_token {
-                        // Persist credential into OS Keyring with AES-256 fallback (AUTH-04, D-03)
-                        if let Some(state) = app_handle.try_state::<crate::AppState>() {
-                            if let Ok(conn) = state.db.lock() {
-                                let _ = crate::auth::keyring_store::store_credential(
-                                    &service_id,
-                                    &token,
-                                    &conn,
-                                );
+                // If service is spotify and token not found yet, also check open.spotify.com
+                if service_id == "spotify" && parse_spotify_cookie(&raw_cookies).is_none() {
+                    if let Ok(open_url) = "https://open.spotify.com".parse::<Url>() {
+                        if let Ok(spotify_cookies) = w.cookies_for_url(open_url) {
+                            raw_cookies.extend(spotify_cookies.into_iter().map(|c| RawCookie {
+                                name: c.name().to_string(),
+                                value: c.value().to_string(),
+                            }));
+                        }
+                    }
+                }
+
+                let captured_token = match service_id.as_str() {
+                    "ytmusic" => parse_ytmusic_cookie(&raw_cookies),
+                    "spotify" => parse_spotify_cookie(&raw_cookies),
+                    _ => None,
+                };
+
+                if let Some(token) = captured_token {
+                    // Persist credential into OS Keyring with AES-256 fallback (AUTH-04, D-03)
+                    if let Some(state) = app_handle.try_state::<crate::AppState>() {
+                        if let Ok(conn) = state.db.lock() {
+                            if let Err(e) = crate::auth::keyring_store::store_credential(
+                                &service_id,
+                                &token,
+                                &conn,
+                            ) {
+                                eprintln!("Failed to store credential for {}: {}", service_id, e);
                             }
                         }
-
-                        // Credential detected: notify frontend with payload per D-02
-                        let payload = serde_json::json!({
-                            "service": service_id,
-                            "status": "connected"
-                        });
-
-                        let _ = app_handle.emit("auth:status_changed", payload);
-
-                        // Auto-close popup window immediately per D-01/D-02
-                        let _ = w.close();
-                        break;
                     }
+
+                    // Credential detected: notify frontend with payload per D-02
+                    let payload = serde_json::json!({
+                        "service": service_id,
+                        "status": "connected"
+                    });
+
+                    let _ = app_handle.emit("auth:status_changed", payload);
+
+                    // Auto-close popup window immediately per D-01/D-02
+                    let _ = w.close();
+                    break;
                 }
             } else {
                 // Window no longer exists (user closed it)

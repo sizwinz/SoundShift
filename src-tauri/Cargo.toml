@@ -20,7 +20,6 @@ tokio = { version = "1.40", features = ["full"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 sha1 = "0.10"
 url = "2.5"
-keyring = "3.2"
 aes-gcm = "0.10"
 reqwest = { version = "0.12", features = ["json", "http2"] }
 chrono = "0.4"
@@ -28,4 +27,14 @@ async-trait = "0.1"
 strsim = "0.11"
 unicode-normalization = "0.1"
 regex = "1.10"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3.2", features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3.2", features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3.2", features = ["linux-native-sync-persistent"] }
+
 
