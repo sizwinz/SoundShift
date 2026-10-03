@@ -1,6 +1,7 @@
 import React from "react";
 import { MatchCandidate } from "../../types/diff";
 import { SourceTrack } from "../../types/provider";
+import { AudioPlayButton } from "./AudioPlayButton";
 import { Check, Clock, Disc } from "lucide-react";
 
 interface CandidateCardProps {
@@ -108,7 +109,9 @@ export const CandidateCard: React.FC<CandidateCardProps> = ({
         </div>
 
         {/* Audio slot */}
-        {audioSlot && <div className="flex-shrink-0">{audioSlot}</div>}
+        <div className="flex-shrink-0">
+          {audioSlot ?? <AudioPlayButton track={track} size="sm" />}
+        </div>
 
         {/* Select Action Button */}
         <button

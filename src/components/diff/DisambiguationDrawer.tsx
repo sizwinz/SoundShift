@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { MatchResult, MatchCandidate } from "../../types/diff";
 import { SourceTrack } from "../../types/provider";
 import { CandidateCard } from "./CandidateCard";
+import { AudioPlayButton } from "./AudioPlayButton";
 import {
   X,
   Search,
@@ -222,6 +223,11 @@ export const DisambiguationDrawer: React.FC<DisambiguationDrawerProps> = ({
                       <span>ISRC: {source_track.isrc}</span>
                     </div>
                   )}
+                </div>
+
+                {/* Source Audio Preview per DIFF-04 */}
+                <div className="flex-shrink-0 pt-1">
+                  <AudioPlayButton track={source_track} size="sm" />
                 </div>
               </div>
             </div>

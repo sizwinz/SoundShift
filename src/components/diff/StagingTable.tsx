@@ -5,12 +5,15 @@ import { SourceTrack } from "../../types/provider";
 import { DiffRow } from "./DiffRow";
 import { FilterToolbar, FilterTab, FilterCounts } from "./FilterToolbar";
 import { DisambiguationDrawer } from "./DisambiguationDrawer";
+import { StagingActionBar } from "./StagingActionBar";
+import { TransferConfirmModal } from "./TransferConfirmModal";
 import { Music, CheckCircle2 } from "lucide-react";
 
 interface StagingTableProps {
   results: MatchResult[];
   onUpdateResults?: (newResults: MatchResult[]) => void;
   onOpenDrawer?: (result: MatchResult) => void;
+  onConfirmTransfer?: (selectedTracks: MatchResult[]) => void;
   selectedTrackIds?: Set<string>;
   onSelectionChange?: (selectedIds: Set<string>) => void;
   playlistTitle?: string;
@@ -22,6 +25,7 @@ export const StagingTable: React.FC<StagingTableProps> = ({
   results,
   onUpdateResults,
   onOpenDrawer,
+  onConfirmTransfer,
   selectedTrackIds: externalSelectedIds,
   onSelectionChange,
   playlistTitle,
@@ -86,6 +90,53 @@ export const StagingTable: React.FC<StagingTableProps> = ({
     } else {
       setInternalSelectedIds(newSet);
     }
+  };
+
+  // Pre-transfer confirmation modal state per D-13
+  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
+
+  // Batch action 1: Accept All Ambiguous per DIFF-06 and D-12
+  const handleAcceptAllAmbiguous = () => {
+    const nextSelection = new Set(selectedTrackIds);
+    const updated = results.map((r) => {
+      if (r.status === "Ambiguous" && r.candidates.length > 0) {
+        const top = r.candidates[0];
+        nextSelection.add(r.source_track.id);
+        return {
+          ...r,
+          status: "Exact" as const,
+          matched_track: top.track,
+          confidence: top.similarity,
+          match_method: "batch_accepted",
+        };
+      }
+      return r;
+    });
+
+    updateSelection(nextSelection);
+    if (onUpdateResults) {
+      onUpdateResults(updated);
+    }
+  };
+
+  // Batch action 2: Skip Unresolved per DIFF-06 and D-12
+  const handleSkipUnresolved = () => {
+    const nextSelection = new Set<string>();
+    results.forEach((r) => {
+      if (r.status === "Exact" && selectedTrackIds.has(r.source_track.id)) {
+        nextSelection.add(r.source_track.id);
+      }
+    });
+    updateSelection(nextSelection);
+  };
+
+  // Batch action 3: Deduplicate per D-12
+  const handleDeduplicate = () => {
+    const nextSelection = new Set(selectedTrackIds);
+    duplicateIdSet.forEach((id) => {
+      nextSelection.delete(id);
+    });
+    updateSelection(nextSelection);
   };
 
   // Synchronize initial selection if results array changes
@@ -309,6 +360,19 @@ export const StagingTable: React.FC<StagingTableProps> = ({
         )}
       </div>
 
+      {/* Sticky Bottom Action Bar per DIFF-06, D-11, D-12 */}
+      <StagingActionBar
+        selectedCount={selectedTrackIds.size}
+        totalCount={results.length}
+        exactCount={counts.exact}
+        amberCount={counts.amber}
+        redCount={counts.red}
+        onAcceptAllAmbiguous={handleAcceptAllAmbiguous}
+        onSkipUnresolved={handleSkipUnresolved}
+        onDeduplicate={handleDeduplicate}
+        onStartTransfer={() => setIsConfirmModalOpen(true)}
+      />
+
       {/* Disambiguation Drawer for Amber and Red tracks per DIFF-03, DIFF-05, D-05 */}
       <DisambiguationDrawer
         matchResult={activeDrawerTrack}
@@ -316,6 +380,21 @@ export const StagingTable: React.FC<StagingTableProps> = ({
         isOpen={Boolean(activeDrawerTrack)}
         onClose={() => setActiveDrawerTrack(null)}
         onResolve={handleResolveCandidate}
+      />
+
+      {/* Pre-Transfer Confirmation Modal per D-13, FR-4.1, EXEC-01 */}
+      <TransferConfirmModal
+        isOpen={isConfirmModalOpen}
+        onClose={() => setIsConfirmModalOpen(false)}
+        onConfirm={() => {
+          setIsConfirmModalOpen(false);
+          const selectedTracks = results.filter((r) => selectedTrackIds.has(r.source_track.id));
+          onConfirmTransfer?.(selectedTracks);
+        }}
+        playlistTitle={playlistTitle}
+        targetService={targetService || "ytmusic"}
+        results={results}
+        selectedTrackIds={selectedTrackIds}
       />
     </div>
   );

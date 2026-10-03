@@ -1,5 +1,6 @@
 import React from "react";
 import { MatchResult } from "../../types/diff";
+import { AudioPlayButton } from "./AudioPlayButton";
 import { ArrowRight, AlertCircle, CheckCircle2, XCircle, Copy } from "lucide-react";
 
 interface DiffRowProps {
@@ -179,6 +180,11 @@ export const DiffRow: React.FC<DiffRowProps> = ({
             {matched_track ? "N/A" : "-"}
           </div>
         )}
+
+        {/* In-App Audio Preview per DIFF-04 */}
+        <div className="flex-shrink-0">
+          <AudioPlayButton track={matched_track ?? source_track} size="sm" />
+        </div>
       </div>
     </div>
   );

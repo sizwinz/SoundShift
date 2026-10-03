@@ -5,6 +5,7 @@ import { AccountManager } from "./components/accounts/AccountManager";
 import { PlaylistSelector } from "./components/playlists/PlaylistSelector";
 import { StagingTable } from "./components/diff/StagingTable";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import { AudioProvider } from "./context/AudioContext";
 import { MatchResult } from "./types/diff";
 import { Playlist } from "./types/provider";
 import { ArrowRight, Music } from "lucide-react";
@@ -124,7 +125,9 @@ function MainContent() {
 export default function App() {
   return (
     <AuthProvider>
-      <MainContent />
+      <AudioProvider>
+        <MainContent />
+      </AudioProvider>
     </AuthProvider>
   );
 }
