@@ -19,11 +19,10 @@
         "height": 780,
         "minWidth": 960,
         "minHeight": 640,
-        "decorations": true,
+        "decorations": false,
         "transparent": false,
         "center": true,
-        "visible": true,
-        "additionalBrowserArgs": "--disable-gpu --disable-gpu-compositing"
+        "visible": true
       }
     ],
     "security": {
