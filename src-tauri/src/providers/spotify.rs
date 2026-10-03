@@ -1,7 +1,7 @@
 use crate::models::{Playlist, SourceTrack};
 use crate::providers::traits::MusicProvider;
 use async_trait::async_trait;
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, COOKIE, USER_AGENT};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, COOKIE, USER_AGENT};
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -115,7 +115,177 @@ impl SpotifyProvider {
         Ok(token)
     }
 
-    fn parse_spotify_track(track_obj: &Value) -> Option<SourceTrack> {
+    /// Executes a GraphQL query against Spotify's internal Pathfinder Partner API.
+    pub async fn pathfinder_query(
+        &self,
+        operation: &str,
+        hash: &str,
+        variables: Value,
+    ) -> Result<Value, String> {
+        let token = self.get_access_token().await?;
+        let payload = serde_json::json!({
+            "variables": variables,
+            "operationName": operation,
+            "extensions": {
+                "persistedQuery": {
+                    "version": 1,
+                    "sha256Hash": hash
+                }
+            }
+        });
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", token))
+                .map_err(|e| format!("Invalid auth header: {}", e))?,
+        );
+        headers.insert(
+            reqwest::header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
+        headers.insert(
+            reqwest::header::ACCEPT,
+            HeaderValue::from_static("application/json"),
+        );
+        headers.insert(
+            HeaderName::from_static("app-platform"),
+            HeaderValue::from_static("WebPlayer"),
+        );
+        headers.insert(
+            HeaderName::from_static("spotify-app-version"),
+            HeaderValue::from_static("1.2.87.311.g2db0c2c4"),
+        );
+        headers.insert(
+            reqwest::header::ORIGIN,
+            HeaderValue::from_static("https://open.spotify.com"),
+        );
+        headers.insert(
+            reqwest::header::REFERER,
+            HeaderValue::from_static("https://open.spotify.com/"),
+        );
+        headers.insert(
+            USER_AGENT,
+            HeaderValue::from_static(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+            ),
+        );
+
+        let res = self
+            .client
+            .post("https://api-partner.spotify.com/pathfinder/v1/query")
+            .headers(headers)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| format!("Spotify Pathfinder request ({}) failed: {}", operation, e))?;
+
+        if !res.status().is_success() {
+            let status = res.status();
+            let body = res.text().await.unwrap_or_default();
+            return Err(format!(
+                "Spotify Pathfinder error ({}) status {}: {}",
+                operation, status, body
+            ));
+        }
+
+        let json: Value = res
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse Spotify Pathfinder JSON ({}): {}", operation, e))?;
+
+        if let Some(errors) = json.get("errors") {
+            if !errors.is_null() {
+                if let Some(err_arr) = errors.as_array() {
+                    if !err_arr.is_empty() {
+                        let msg = err_arr[0]["message"].as_str().unwrap_or("GraphQL error");
+                        return Err(format!("Spotify Pathfinder error ({}): {}", operation, msg));
+                    }
+                }
+            }
+        }
+
+        Ok(json)
+    }
+
+    /// Normalizes track entities returned by Pathfinder queries (fetchPlaylist, fetchLibraryTracks, searchDesktop).
+    pub fn parse_pathfinder_track(data: &Value, fallback_uri: Option<&str>) -> Option<SourceTrack> {
+        let uri = data["uri"]
+            .as_str()
+            .or_else(|| fallback_uri)
+            .unwrap_or("");
+
+        let id = if let Some(stripped) = uri.strip_prefix("spotify:track:") {
+            stripped.to_string()
+        } else if let Some(raw_id) = data["id"].as_str() {
+            raw_id.to_string()
+        } else if !uri.is_empty() {
+            uri.to_string()
+        } else {
+            return None;
+        };
+
+        let title = data["name"].as_str().unwrap_or("Unknown").to_string();
+
+        let artists = data["artists"]["items"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|a| a["profile"]["name"].as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let album = data["albumOfTrack"]["name"].as_str().map(|s| s.to_string());
+
+        let duration_ms = data["trackDuration"]["totalMilliseconds"]
+            .as_u64()
+            .or_else(|| data["duration"]["totalMilliseconds"].as_u64())
+            .unwrap_or(0);
+
+        let isrc = data["externalIds"]["isrc"]
+            .as_str()
+            .or_else(|| data["isrc"].as_str())
+            .map(|s| s.to_string());
+
+        let is_explicit = data["contentRating"]["label"]
+            .as_str()
+            .map(|l| l.eq_ignore_ascii_case("EXPLICIT"))
+            .unwrap_or(false);
+
+        let is_playable = data["playability"]["playable"].as_bool().unwrap_or(true);
+
+        let preview_url = data["preview_url"]
+            .as_str()
+            .or_else(|| {
+                data["associationsV3"]["audioAssociations"]["items"]
+                    .as_array()
+                    .and_then(|items| items.first())
+                    .and_then(|item| item["url"].as_str())
+            })
+            .map(|s| s.to_string());
+
+        let thumbnail_url = data["albumOfTrack"]["coverArt"]["sources"]
+            .as_array()
+            .and_then(|imgs| imgs.first())
+            .and_then(|img| img["url"].as_str())
+            .map(|s| s.to_string());
+
+        Some(SourceTrack {
+            id,
+            title,
+            artists,
+            album,
+            duration_ms,
+            isrc,
+            is_explicit,
+            is_playable,
+            preview_url,
+            thumbnail_url,
+        })
+    }
+
+    pub fn parse_spotify_track(track_obj: &Value) -> Option<SourceTrack> {
         let id = track_obj["id"].as_str()?.to_string();
         let title = track_obj["name"].as_str().unwrap_or("Unknown").to_string();
 
@@ -161,37 +331,30 @@ impl SpotifyProvider {
 #[async_trait]
 impl MusicProvider for SpotifyProvider {
     async fn list_playlists(&self) -> Result<Vec<Playlist>, String> {
-        let token = self.get_access_token().await?;
         let mut playlists = Vec::new();
         let mut offset = 0;
         let limit = 50;
 
         loop {
-            let url = format!(
-                "https://api.spotify.com/v1/me/playlists?limit={}&offset={}",
-                limit, offset
-            );
+            let variables = serde_json::json!({
+                "filters": ["Playlists"],
+                "order": serde_json::Value::Null,
+                "textFilter": "",
+                "features": ["LIKED_SONGS", "YOUR_EPISODES"],
+                "limit": limit,
+                "offset": offset
+            });
 
-            let res = self
-                .client
-                .get(&url)
-                .header(AUTHORIZATION, format!("Bearer {}", token))
-                .send()
-                .await
-                .map_err(|e| format!("Spotify list_playlists request failed: {}", e))?;
+            let json = self
+                .pathfinder_query(
+                    "libraryV3",
+                    "973e511ca44261fda7eebac8b653155e7caee3675abb4fb110cc1b8c78b091c3",
+                    variables,
+                )
+                .await?;
 
-            if !res.status().is_success() {
-                let status = res.status();
-                let text = res.text().await.unwrap_or_default();
-                return Err(format!("Spotify API error ({}): {}", status, text));
-            }
-
-            let json: Value = res
-                .json()
-                .await
-                .map_err(|e| format!("Failed to parse Spotify playlists: {}", e))?;
-
-            let items = match json["items"].as_array() {
+            let library = &json["data"]["me"]["libraryV3"];
+            let items = match library["items"].as_array() {
                 Some(arr) => arr,
                 None => break,
             };
@@ -201,32 +364,80 @@ impl MusicProvider for SpotifyProvider {
             }
 
             for item in items {
-                let id = match item["id"].as_str() {
-                    Some(s) => s.to_string(),
-                    None => continue,
-                };
-                let title = item["name"].as_str().unwrap_or("Untitled").to_string();
-                let description = item["description"].as_str().map(|s| s.to_string());
-                let track_count = item["tracks"]["total"].as_u64().unwrap_or(0) as u32;
-                let is_public = item["public"].as_bool().unwrap_or(true);
-                let cover_url = item["images"]
-                    .as_array()
-                    .and_then(|arr| arr.first())
-                    .and_then(|img| img["url"].as_str())
-                    .map(|s| s.to_string());
+                let item_wrapper = &item["item"];
+                let typename = item_wrapper["__typename"].as_str().unwrap_or("");
 
-                playlists.push(Playlist {
-                    id,
-                    service: "spotify".to_string(),
-                    title,
-                    description,
-                    track_count,
-                    is_public,
-                    cover_url,
-                });
+                // Skip folders and non-playlist containers
+                if typename.contains("Folder") {
+                    continue;
+                }
+
+                if typename.contains("PseudoPlaylist") {
+                    let data = &item_wrapper["data"];
+                    let name = data["name"].as_str().unwrap_or("Liked Songs").to_string();
+                    if name.to_lowercase().contains("episodes") {
+                        continue;
+                    }
+                    let cover_url = data["images"]["items"]
+                        .as_array()
+                        .and_then(|arr| arr.first())
+                        .and_then(|img| img["sources"].as_array())
+                        .and_then(|srcs| srcs.first())
+                        .and_then(|src| src["url"].as_str())
+                        .map(|s| s.to_string());
+
+                    playlists.push(Playlist {
+                        id: "collection:tracks".to_string(),
+                        service: "spotify".to_string(),
+                        title: name,
+                        description: Some("Your Spotify Liked Songs".to_string()),
+                        track_count: 0,
+                        is_public: false,
+                        cover_url,
+                    });
+                    continue;
+                }
+
+                if typename.contains("Playlist") {
+                    let data = &item_wrapper["data"];
+                    let uri = data["uri"]
+                        .as_str()
+                        .or_else(|| item_wrapper["_uri"].as_str())
+                        .unwrap_or("");
+                    let id = uri
+                        .strip_prefix("spotify:playlist:")
+                        .unwrap_or(uri)
+                        .to_string();
+
+                    if id.is_empty() {
+                        continue;
+                    }
+
+                    let title = data["name"].as_str().unwrap_or("Untitled").to_string();
+                    let description = data["description"].as_str().map(|s| s.to_string());
+                    let track_count = data["trackCount"].as_u64().unwrap_or(0) as u32;
+
+                    let cover_url = data["images"]["items"]
+                        .as_array()
+                        .and_then(|arr| arr.first())
+                        .and_then(|img| img["sources"].as_array())
+                        .and_then(|srcs| srcs.first())
+                        .and_then(|src| src["url"].as_str())
+                        .map(|s| s.to_string());
+
+                    playlists.push(Playlist {
+                        id,
+                        service: "spotify".to_string(),
+                        title,
+                        description,
+                        track_count,
+                        is_public: false,
+                        cover_url,
+                    });
+                }
             }
 
-            let total = json["total"].as_u64().unwrap_or(0) as usize;
+            let total = library["totalCount"].as_u64().unwrap_or(0) as usize;
             offset += items.len();
             if offset >= total || items.len() < limit {
                 break;
@@ -241,78 +452,135 @@ impl MusicProvider for SpotifyProvider {
         playlist_id: &str,
         tx: Option<tokio::sync::mpsc::Sender<Vec<SourceTrack>>>,
     ) -> Result<Vec<SourceTrack>, String> {
-        let token = self.get_access_token().await?;
         let mut all_tracks = Vec::new();
         let mut offset = 0;
-        let limit = 100;
 
-        loop {
-            let url = format!(
-                "https://api.spotify.com/v1/playlists/{}/tracks?limit={}&offset={}",
-                playlist_id, limit, offset
-            );
+        if playlist_id == "collection:tracks"
+            || playlist_id == "me:liked"
+            || playlist_id.contains("collection")
+        {
+            // Liked Songs via fetchLibraryTracks
+            let limit = 50;
+            loop {
+                let variables = serde_json::json!({
+                    "offset": offset,
+                    "limit": limit
+                });
 
-            let res = self
-                .client
-                .get(&url)
-                .header(AUTHORIZATION, format!("Bearer {}", token))
-                .send()
-                .await
-                .map_err(|e| format!("Spotify get_playlist_tracks request failed: {}", e))?;
+                let json = self
+                    .pathfinder_query(
+                        "fetchLibraryTracks",
+                        "087278b20b743578a6262c2b0b4bcd20d879c503cc359a2285baf083ef944240",
+                        variables,
+                    )
+                    .await?;
 
-            if !res.status().is_success() {
-                let status = res.status();
-                let text = res.text().await.unwrap_or_default();
-                return Err(format!("Spotify tracks error ({}): {}", status, text));
-            }
+                let tracks_node = &json["data"]["me"]["library"]["tracks"];
+                let items = match tracks_node["items"].as_array() {
+                    Some(arr) => arr,
+                    None => break,
+                };
 
-            let json: Value = res
-                .json()
-                .await
-                .map_err(|e| format!("Failed to parse Spotify tracks: {}", e))?;
+                if items.is_empty() {
+                    break;
+                }
 
-            let items = match json["items"].as_array() {
-                Some(arr) => arr,
-                None => break,
-            };
+                let mut chunk = Vec::new();
+                for item in items {
+                    let track_data = &item["track"]["data"];
+                    let fallback_uri = item["track"]["_uri"].as_str();
+                    if let Some(track) = Self::parse_pathfinder_track(track_data, fallback_uri) {
+                        chunk.push(track);
+                    }
+                }
 
-            if items.is_empty() {
-                break;
-            }
+                if let Some(ref sender) = tx {
+                    let _ = sender.send(chunk.clone()).await;
+                }
 
-            let mut chunk = Vec::new();
+                all_tracks.extend(chunk);
 
-            for item in items {
-                let track_obj = &item["track"];
-                if track_obj.is_null() {
-                    // Retain unavailable/region-restricted source tracks per D-03
-                    chunk.push(SourceTrack {
-                        id: format!("unavailable_{}", offset + chunk.len()),
-                        title: "Unavailable Track".to_string(),
-                        artists: vec!["Unknown".to_string()],
-                        album: None,
-                        duration_ms: 0,
-                        isrc: None,
-                        is_explicit: false,
-                        is_playable: false,
-                        preview_url: None,
-                        thumbnail_url: None,
-                    });
-                } else if let Some(track) = Self::parse_spotify_track(track_obj) {
-                    chunk.push(track);
+                let total = tracks_node["totalCount"].as_u64().unwrap_or(0) as usize;
+                offset += items.len();
+                if offset >= total || items.len() < limit {
+                    break;
                 }
             }
+        } else {
+            // Standard playlist via fetchPlaylist
+            let limit = 100;
+            let uri = if playlist_id.starts_with("spotify:playlist:") {
+                playlist_id.to_string()
+            } else {
+                format!("spotify:playlist:{}", playlist_id)
+            };
 
-            if let Some(ref sender) = tx {
-                let _ = sender.send(chunk.clone()).await;
-            }
+            loop {
+                let variables = serde_json::json!({
+                    "uri": uri,
+                    "offset": offset,
+                    "limit": limit,
+                    "enableWatchFeedEntrypoint": false
+                });
 
-            all_tracks.extend(chunk);
+                let json = self
+                    .pathfinder_query(
+                        "fetchPlaylist",
+                        "bb67e0af06e8d6f52b531f97468ee4acd44cd0f82b988e15c2ea47b1148efc77",
+                        variables,
+                    )
+                    .await?;
 
-            let total = json["total"].as_u64().unwrap_or(0) as usize;
-            offset += items.len();
-            if offset >= total || items.len() < limit {
-                break;
+                let content = &json["data"]["playlistV2"]["content"];
+                let items = match content["items"].as_array() {
+                    Some(arr) => arr,
+                    None => break,
+                };
+
+                if items.is_empty() {
+                    break;
+                }
+
+                let mut chunk = Vec::new();
+                for item in items {
+                    let item_v2_data = &item["itemV2"]["data"];
+                    if item_v2_data.is_null() {
+                        // Retain unavailable/region-restricted source tracks per D-03
+                        chunk.push(SourceTrack {
+                            id: format!("unavailable_{}", offset + chunk.len()),
+                            title: "Unavailable Track".to_string(),
+                            artists: vec!["Unknown".to_string()],
+                            album: None,
+                            duration_ms: 0,
+                            isrc: None,
+                            is_explicit: false,
+                            is_playable: false,
+                            preview_url: None,
+                            thumbnail_url: None,
+                        });
+                    } else {
+                        let fallback_uri = item_v2_data["uri"]
+                            .as_str()
+                            .or_else(|| item["itemV3"]["data"]["uri"].as_str());
+                        if let Some(track) =
+                            Self::parse_pathfinder_track(item_v2_data, fallback_uri)
+                        {
+                            chunk.push(track);
+                        }
+                    }
+                }
+
+                if let Some(ref sender) = tx {
+                    let _ = sender.send(chunk.clone()).await;
+                }
+
+                all_tracks.extend(chunk);
+
+                let total = content["totalCount"].as_u64().unwrap_or(0) as usize;
+                offset += items.len();
+                if offset >= total || items.len() < limit {
+                    break;
+                }
             }
         }
 
@@ -320,33 +588,31 @@ impl MusicProvider for SpotifyProvider {
     }
 
     async fn search_track(&self, query: &str) -> Result<Vec<SourceTrack>, String> {
-        let token = self.get_access_token().await?;
-        let url = format!(
-            "https://api.spotify.com/v1/search?type=track&limit=5&q={}",
-            urlencoding::encode(query)
-        );
+        let variables = serde_json::json!({
+            "searchTerm": query,
+            "offset": 0,
+            "limit": 5,
+            "numberOfTopResults": 5,
+            "includeAudiobooks": false,
+            "includeArtistHasConcertsField": false,
+            "includePreReleases": false,
+            "includeLocalConcertsField": false
+        });
 
-        let res = self
-            .client
-            .get(&url)
-            .header(AUTHORIZATION, format!("Bearer {}", token))
-            .send()
-            .await
-            .map_err(|e| format!("Spotify search request failed: {}", e))?;
-
-        if !res.status().is_success() {
-            return Err(format!("Spotify search failed with status: {}", res.status()));
-        }
-
-        let json: Value = res
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse Spotify search results: {}", e))?;
+        let json = self
+            .pathfinder_query(
+                "searchDesktop",
+                "d9f785900f0710b31c07818d617f4f7600c1e21217e80f5b043d1e78d74e6026",
+                variables,
+            )
+            .await?;
 
         let mut results = Vec::new();
-        if let Some(items) = json["tracks"]["items"].as_array() {
+        if let Some(items) = json["data"]["searchV2"]["tracksV2"]["items"].as_array() {
             for item in items {
-                if let Some(track) = Self::parse_spotify_track(item) {
+                let track_data = &item["item"]["data"];
+                let fallback_uri = track_data["uri"].as_str();
+                if let Some(track) = Self::parse_pathfinder_track(track_data, fallback_uri) {
                     results.push(track);
                 }
             }
@@ -510,12 +776,6 @@ impl MusicProvider for SpotifyProvider {
     }
 }
 
-mod urlencoding {
-    pub fn encode(data: &str) -> String {
-        url::form_urlencoded::byte_serialize(data.as_bytes()).collect()
-    }
-}
-
 fn hmac_sha1(key: &[u8], data: &[u8]) -> [u8; 20] {
     use sha1::{Digest, Sha1};
     let mut k_block = [0u8; 64];
@@ -584,5 +844,147 @@ mod tests {
     fn test_spotify_totp_vector() {
         let totp = generate_spotify_totp(1791023811000);
         assert_eq!(totp, "237400");
+    }
+
+    #[test]
+    fn test_parse_pathfinder_track_fetch_playlist() {
+        let json = serde_json::json!({
+            "__typename": "Track",
+            "uri": "spotify:track:2ckIzhVR3hqnf7sJ2uvypz",
+            "name": "No Batidao - Phonk (Marimba Ringtone Cover)",
+            "trackDuration": {
+                "totalMilliseconds": 31384
+            },
+            "albumOfTrack": {
+                "name": "No Batidao",
+                "coverArt": {
+                    "sources": [
+                        { "url": "https://image-cdn.spotifycdn.com/cover.jpg" }
+                    ]
+                }
+            },
+            "artists": {
+                "items": [
+                    { "profile": { "name": "Anime Ringtones" } },
+                    { "profile": { "name": "Anytunz" } }
+                ]
+            },
+            "contentRating": {
+                "label": "NONE"
+            },
+            "playability": {
+                "playable": true
+            }
+        });
+
+        let track = SpotifyProvider::parse_pathfinder_track(&json, None).expect("Should parse");
+        assert_eq!(track.id, "2ckIzhVR3hqnf7sJ2uvypz");
+        assert_eq!(track.title, "No Batidao - Phonk (Marimba Ringtone Cover)");
+        assert_eq!(track.artists, vec!["Anime Ringtones", "Anytunz"]);
+        assert_eq!(track.album, Some("No Batidao".to_string()));
+        assert_eq!(track.duration_ms, 31384);
+        assert!(!track.is_explicit);
+        assert!(track.is_playable);
+        assert_eq!(track.thumbnail_url, Some("https://image-cdn.spotifycdn.com/cover.jpg".to_string()));
+    }
+
+    #[test]
+    fn test_parse_pathfinder_track_fetch_library() {
+        let json = serde_json::json!({
+            "__typename": "Track",
+            "name": "A Song of Ice and Fire",
+            "duration": {
+                "totalMilliseconds": 131888
+            },
+            "albumOfTrack": {
+                "name": "Game Of Thrones: Season 8",
+                "coverArt": {
+                    "sources": [
+                        { "url": "https://image-cdn.spotifycdn.com/got.jpg" }
+                    ]
+                }
+            },
+            "artists": {
+                "items": [
+                    { "profile": { "name": "Ramin Djawadi" } }
+                ]
+            },
+            "contentRating": {
+                "label": "EXPLICIT"
+            },
+            "playability": {
+                "playable": true
+            }
+        });
+
+        let track = SpotifyProvider::parse_pathfinder_track(&json, Some("spotify:track:1AvLUHxSunGMWWRfEFmWSC"))
+            .expect("Should parse with fallback URI");
+        assert_eq!(track.id, "1AvLUHxSunGMWWRfEFmWSC");
+        assert_eq!(track.title, "A Song of Ice and Fire");
+        assert_eq!(track.artists, vec!["Ramin Djawadi"]);
+        assert_eq!(track.album, Some("Game Of Thrones: Season 8".to_string()));
+        assert_eq!(track.duration_ms, 131888);
+        assert!(track.is_explicit);
+        assert!(track.is_playable);
+    }
+
+    #[test]
+    fn test_parse_pathfinder_track_search_desktop() {
+        let json = serde_json::json!({
+            "__typename": "Track",
+            "id": "37JOhPdeecNxkqpfcj1XcX",
+            "uri": "spotify:track:37JOhPdeecNxkqpfcj1XcX",
+            "name": "Darmiyaan (From \"Musafir Cafe\")",
+            "duration": {
+                "totalMilliseconds": 270125
+            },
+            "albumOfTrack": {
+                "name": "Musafir Cafe",
+                "coverArt": {
+                    "sources": [
+                        { "url": "https://image-cdn.spotifycdn.com/musafir.jpg" }
+                    ]
+                }
+            },
+            "artists": {
+                "items": [
+                    { "profile": { "name": "Rekha Bhardwaj" } },
+                    { "profile": { "name": "Raghav Kaushik" } }
+                ]
+            },
+            "contentRating": {
+                "label": "NONE"
+            },
+            "playability": {
+                "playable": true
+            }
+        });
+
+        let track = SpotifyProvider::parse_pathfinder_track(&json, None).expect("Should parse");
+        assert_eq!(track.id, "37JOhPdeecNxkqpfcj1XcX");
+        assert_eq!(track.title, "Darmiyaan (From \"Musafir Cafe\")");
+        assert_eq!(track.artists, vec!["Rekha Bhardwaj", "Raghav Kaushik"]);
+        assert_eq!(track.duration_ms, 270125);
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_live_spotify_diag() {
+        let app_data = std::env::var("APPDATA").unwrap_or_default();
+        let db_path = format!("{}\\com.soundshift.app\\soundshift.db", app_data);
+        if let Ok(conn) = rusqlite::Connection::open_with_flags(
+            &db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        ) {
+            if let Ok(Some(sp_dc)) = crate::auth::keyring_store::retrieve_credential("spotify", &conn) {
+                let provider = SpotifyProvider::new(sp_dc);
+                let playlists = provider.list_playlists().await.expect("Live playlists should fetch successfully");
+                assert!(!playlists.is_empty(), "Should find playlists in live user account");
+                if let Some(first) = playlists.first() {
+                    let tracks = provider.get_playlist_tracks(&first.id, None).await.expect("Tracks should fetch successfully");
+                    assert!(!tracks.is_empty(), "First playlist should have tracks");
+                }
+            }
+        }
     }
 }
