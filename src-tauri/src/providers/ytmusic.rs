@@ -538,6 +538,71 @@ impl MusicProvider for YouTubeMusicProvider {
 
         Ok(())
     }
+
+    async fn remove_tracks_from_playlist(
+        &self,
+        playlist_id: &str,
+        track_ids: &[String],
+    ) -> Result<(), String> {
+        let headers = self.build_headers()?;
+        let clean_id = playlist_id.trim_start_matches("VL");
+
+        let actions: Vec<Value> = track_ids
+            .iter()
+            .map(|id| {
+                json!({
+                    "action": "ACTION_REMOVE_VIDEO_BY_VIDEO_ID",
+                    "removedVideoId": id
+                })
+            })
+            .collect();
+
+        let body = json!({
+            "context": Self::client_context(),
+            "playlistId": clean_id,
+            "actions": actions
+        });
+
+        let res = self
+            .client
+            .post("https://music.youtube.com/youtubei/v1/browse/edit_playlist")
+            .headers(headers)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("InnerTube edit_playlist remove failed: {}", e))?;
+
+        if !res.status().is_success() {
+            return Err(format!("Remove tracks failed with status: {}", res.status()));
+        }
+
+        Ok(())
+    }
+
+    async fn delete_playlist(&self, playlist_id: &str) -> Result<(), String> {
+        let headers = self.build_headers()?;
+        let clean_id = playlist_id.trim_start_matches("VL");
+
+        let body = json!({
+            "context": Self::client_context(),
+            "playlistId": clean_id
+        });
+
+        let res = self
+            .client
+            .post("https://music.youtube.com/youtubei/v1/playlist/delete")
+            .headers(headers)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("InnerTube playlist/delete failed: {}", e))?;
+
+        if !res.status().is_success() {
+            return Err(format!("Delete playlist failed with status: {}", res.status()));
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

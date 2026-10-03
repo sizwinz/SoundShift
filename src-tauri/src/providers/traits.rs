@@ -12,4 +12,6 @@ pub trait MusicProvider: Send + Sync {
     async fn search_track(&self, query: &str) -> Result<Vec<SourceTrack>, String>;
     async fn create_playlist(&self, title: &str, description: Option<&str>) -> Result<String, String>;
     async fn add_tracks_to_playlist(&self, playlist_id: &str, track_ids: &[String]) -> Result<(), String>;
+    async fn remove_tracks_from_playlist(&self, playlist_id: &str, track_ids: &[String]) -> Result<(), String>;
+    async fn delete_playlist(&self, playlist_id: &str) -> Result<(), String>;
 }

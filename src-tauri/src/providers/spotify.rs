@@ -409,6 +409,72 @@ impl MusicProvider for SpotifyProvider {
 
         Ok(())
     }
+
+    async fn remove_tracks_from_playlist(
+        &self,
+        playlist_id: &str,
+        track_ids: &[String],
+    ) -> Result<(), String> {
+        let token = self.get_access_token().await?;
+        let url = format!("https://api.spotify.com/v1/playlists/{}/tracks", playlist_id);
+
+        for chunk in track_ids.chunks(100) {
+            let tracks: Vec<Value> = chunk
+                .iter()
+                .map(|id| {
+                    let uri = if id.starts_with("spotify:track:") {
+                        id.clone()
+                    } else {
+                        format!("spotify:track:{}", id)
+                    };
+                    serde_json::json!({ "uri": uri })
+                })
+                .collect();
+
+            let body = serde_json::json!({ "tracks": tracks });
+
+            let res = self
+                .client
+                .delete(&url)
+                .header(AUTHORIZATION, format!("Bearer {}", token))
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| format!("Spotify remove_tracks failed: {}", e))?;
+
+            if !res.status().is_success() {
+                let status = res.status();
+                let text = res.text().await.unwrap_or_default();
+                return Err(format!("Spotify remove_tracks failed ({}): {}", status, text));
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn delete_playlist(&self, playlist_id: &str) -> Result<(), String> {
+        let token = self.get_access_token().await?;
+        let url = format!(
+            "https://api.spotify.com/v1/playlists/{}/followers",
+            playlist_id
+        );
+
+        let res = self
+            .client
+            .delete(&url)
+            .header(AUTHORIZATION, format!("Bearer {}", token))
+            .send()
+            .await
+            .map_err(|e| format!("Spotify delete_playlist failed: {}", e))?;
+
+        if !res.status().is_success() {
+            let status = res.status();
+            let text = res.text().await.unwrap_or_default();
+            return Err(format!("Spotify delete_playlist failed ({}): {}", status, text));
+        }
+
+        Ok(())
+    }
 }
 
 mod urlencoding {

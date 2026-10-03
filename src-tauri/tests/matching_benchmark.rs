@@ -55,6 +55,18 @@ impl MusicProvider for MockBenchmarkProvider {
     ) -> Result<(), String> {
         Ok(())
     }
+
+    async fn remove_tracks_from_playlist(
+        &self,
+        _playlist_id: &str,
+        _track_ids: &[String],
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    async fn delete_playlist(&self, _playlist_id: &str) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 #[tokio::test]

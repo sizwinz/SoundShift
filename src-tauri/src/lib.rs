@@ -4,11 +4,14 @@ pub mod models;
 pub mod providers;
 pub mod storage;
 
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use tauri::Manager;
+use crate::engine::worker::TransferControl;
 
 pub struct AppState {
-    pub db: Mutex<rusqlite::Connection>,
+    pub db: Arc<Mutex<rusqlite::Connection>>,
+    pub active_transfers: Arc<Mutex<HashMap<String, TransferControl>>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -22,13 +25,21 @@ pub fn run() {
             providers::commands::fetch_playlist_tracks,
             providers::commands::search_provider_tracks,
             providers::commands::resolve_track_by_url,
-            engine::commands::execute_playlist_matching
+            engine::commands::execute_playlist_matching,
+            engine::commands::start_batch_transfer,
+            engine::commands::pause_batch_transfer,
+            engine::commands::resume_batch_transfer,
+            engine::commands::cancel_batch_transfer,
+            engine::commands::execute_snapshot_rollback,
+            engine::commands::audit_playlist_integrity,
+            engine::commands::get_transfer_history
         ])
         .setup(|app| {
             let app_dir = app.path().app_data_dir().expect("failed to get app data dir");
             let conn = storage::init_db(&app_dir).expect("failed to initialize sqlite database");
             app.manage(AppState {
-                db: Mutex::new(conn),
+                db: Arc::new(Mutex::new(conn)),
+                active_transfers: Arc::new(Mutex::new(HashMap::new())),
             });
 
             // Asynchronously center, reveal, and focus window after event loop initialization

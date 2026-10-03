@@ -2,6 +2,8 @@ pub mod commands;
 pub mod matcher;
 pub mod normalizer;
 pub mod rate_limiter;
+pub mod snapshot;
+pub mod worker;
 
 pub use commands::*;
 pub use matcher::{
