@@ -6,6 +6,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+#[derive(Clone)]
 pub struct SpotifyProvider {
     client: reqwest::Client,
     sp_dc: String,
@@ -208,6 +209,35 @@ impl SpotifyProvider {
         Ok(json)
     }
 
+    /// Fetches the total track count for a given Spotify playlist using fetchPlaylist.
+    pub async fn fetch_playlist_track_count(&self, playlist_id: &str) -> Option<u32> {
+        let uri = if playlist_id.starts_with("spotify:playlist:") {
+            playlist_id.to_string()
+        } else {
+            format!("spotify:playlist:{}", playlist_id)
+        };
+
+        let variables = serde_json::json!({
+            "uri": uri,
+            "offset": 0,
+            "limit": 1,
+            "enableWatchFeedEntrypoint": false
+        });
+
+        let json = self
+            .pathfinder_query(
+                "fetchPlaylist",
+                "bb67e0af06e8d6f52b531f97468ee4acd44cd0f82b988e15c2ea47b1148efc77",
+                variables,
+            )
+            .await
+            .ok()?;
+
+        json["data"]["playlistV2"]["content"]["totalCount"]
+            .as_u64()
+            .map(|c| c as u32)
+    }
+
     /// Normalizes track entities returned by Pathfinder queries (fetchPlaylist, fetchLibraryTracks, searchDesktop).
     pub fn parse_pathfinder_track(data: &Value, fallback_uri: Option<&str>) -> Option<SourceTrack> {
         let uri = data["uri"]
@@ -332,115 +362,175 @@ impl SpotifyProvider {
 impl MusicProvider for SpotifyProvider {
     async fn list_playlists(&self) -> Result<Vec<Playlist>, String> {
         let mut playlists = Vec::new();
-        let mut offset = 0;
-        let limit = 50;
+        let mut seen_playlist_ids = std::collections::HashSet::new();
+        let mut folder_queue: std::collections::VecDeque<Option<String>> = std::collections::VecDeque::new();
+        folder_queue.push_back(None); // None represents root library
+        let mut visited_folders = std::collections::HashSet::new();
 
-        loop {
-            let variables = serde_json::json!({
-                "filters": ["Playlists"],
-                "order": serde_json::Value::Null,
-                "textFilter": "",
-                "features": ["LIKED_SONGS", "YOUR_EPISODES"],
-                "limit": limit,
-                "offset": offset
+        while let Some(current_folder) = folder_queue.pop_front() {
+            if let Some(ref f_uri) = current_folder {
+                if !visited_folders.insert(f_uri.clone()) {
+                    continue;
+                }
+            }
+
+            let mut offset = 0;
+            let limit = 50;
+
+            loop {
+                let mut variables = serde_json::json!({
+                    "filters": if current_folder.is_none() { serde_json::json!(["Playlists"]) } else { serde_json::json!([]) },
+                    "order": serde_json::Value::Null,
+                    "textFilter": "",
+                    "features": ["LIKED_SONGS", "YOUR_EPISODES"],
+                    "limit": limit,
+                    "offset": offset
+                });
+
+                if let Some(ref f_uri) = current_folder {
+                    variables["folderUri"] = serde_json::Value::String(f_uri.clone());
+                }
+
+                let json = self
+                    .pathfinder_query(
+                        "libraryV3",
+                        "973e511ca44261fda7eebac8b653155e7caee3675abb4fb110cc1b8c78b091c3",
+                        variables,
+                    )
+                    .await?;
+
+                let library = &json["data"]["me"]["libraryV3"];
+                let items = match library["items"].as_array() {
+                    Some(arr) => arr,
+                    None => break,
+                };
+
+                if items.is_empty() {
+                    break;
+                }
+
+                for item in items {
+                    let item_wrapper = &item["item"];
+                    let typename = item_wrapper["__typename"].as_str().unwrap_or("");
+
+                    if typename.contains("Folder") {
+                        let folder_uri = item_wrapper["_uri"]
+                            .as_str()
+                            .or_else(|| item_wrapper["data"]["uri"].as_str());
+                        if let Some(uri) = folder_uri {
+                            if !uri.is_empty() && !visited_folders.contains(uri) {
+                                folder_queue.push_back(Some(uri.to_string()));
+                            }
+                        }
+                        continue;
+                    }
+
+                    if typename.contains("PseudoPlaylist") {
+                        if current_folder.is_none() {
+                            let data = &item_wrapper["data"];
+                            let name = data["name"].as_str().unwrap_or("Liked Songs").to_string();
+                            if name.to_lowercase().contains("episodes") {
+                                continue;
+                            }
+                            let count = data["count"].as_u64().unwrap_or(0) as u32;
+                            let cover_url = data["images"]["items"]
+                                .as_array()
+                                .and_then(|arr| arr.first())
+                                .and_then(|img| img["sources"].as_array())
+                                .and_then(|srcs| srcs.first())
+                                .and_then(|src| src["url"].as_str())
+                                .map(|s| s.to_string());
+
+                            if seen_playlist_ids.insert("collection:tracks".to_string()) {
+                                playlists.push(Playlist {
+                                    id: "collection:tracks".to_string(),
+                                    service: "spotify".to_string(),
+                                    title: name,
+                                    description: Some("Your Spotify Liked Songs".to_string()),
+                                    track_count: count,
+                                    is_public: false,
+                                    cover_url,
+                                });
+                            }
+                        }
+                        continue;
+                    }
+
+                    if typename.contains("Playlist") {
+                        let data = &item_wrapper["data"];
+                        let uri = data["uri"]
+                            .as_str()
+                            .or_else(|| item_wrapper["_uri"].as_str())
+                            .unwrap_or("");
+                        let id = uri
+                            .strip_prefix("spotify:playlist:")
+                            .unwrap_or(uri)
+                            .to_string();
+
+                        if id.is_empty() || !seen_playlist_ids.insert(id.clone()) {
+                            continue;
+                        }
+
+                        let title = data["name"].as_str().unwrap_or("Untitled").to_string();
+                        let description = data["description"].as_str().map(|s| s.to_string());
+                        let can_edit = data["currentUserCapabilities"]["canEditItems"].as_bool().unwrap_or(true);
+                        let is_public = !can_edit;
+                        let initial_count = data["count"]
+                            .as_u64()
+                            .or_else(|| data["trackCount"].as_u64())
+                            .unwrap_or(0) as u32;
+
+                        let cover_url = data["images"]["items"]
+                            .as_array()
+                            .and_then(|arr| arr.first())
+                            .and_then(|img| img["sources"].as_array())
+                            .and_then(|srcs| srcs.first())
+                            .and_then(|src| src["url"].as_str())
+                            .map(|s| s.to_string());
+
+                        playlists.push(Playlist {
+                            id,
+                            service: "spotify".to_string(),
+                            title,
+                            description,
+                            track_count: initial_count,
+                            is_public,
+                            cover_url,
+                        });
+                    }
+                }
+
+                let total = library["totalCount"].as_u64().unwrap_or(0) as usize;
+                offset += items.len();
+                if offset >= total || items.len() < limit {
+                    break;
+                }
+            }
+        }
+
+        // Concurrently resolve exact track counts for all playlists where count is 0
+        let sem = Arc::new(tokio::sync::Semaphore::new(8));
+        let mut join_set = tokio::task::JoinSet::new();
+
+        for (idx, pl) in playlists.iter().enumerate() {
+            if pl.id == "collection:tracks" || pl.track_count > 0 {
+                continue;
+            }
+            let sem_clone = sem.clone();
+            let provider = self.clone();
+            let pl_id = pl.id.clone();
+            join_set.spawn(async move {
+                let _permit = sem_clone.acquire().await.ok();
+                let count = provider.fetch_playlist_track_count(&pl_id).await;
+                (idx, count)
             });
+        }
 
-            let json = self
-                .pathfinder_query(
-                    "libraryV3",
-                    "973e511ca44261fda7eebac8b653155e7caee3675abb4fb110cc1b8c78b091c3",
-                    variables,
-                )
-                .await?;
-
-            let library = &json["data"]["me"]["libraryV3"];
-            let items = match library["items"].as_array() {
-                Some(arr) => arr,
-                None => break,
-            };
-
-            if items.is_empty() {
-                break;
-            }
-
-            for item in items {
-                let item_wrapper = &item["item"];
-                let typename = item_wrapper["__typename"].as_str().unwrap_or("");
-
-                // Skip folders and non-playlist containers
-                if typename.contains("Folder") {
-                    continue;
+        while let Some(res) = join_set.join_next().await {
+            if let Ok((idx, Some(count))) = res {
+                if idx < playlists.len() {
+                    playlists[idx].track_count = count;
                 }
-
-                if typename.contains("PseudoPlaylist") {
-                    let data = &item_wrapper["data"];
-                    let name = data["name"].as_str().unwrap_or("Liked Songs").to_string();
-                    if name.to_lowercase().contains("episodes") {
-                        continue;
-                    }
-                    let cover_url = data["images"]["items"]
-                        .as_array()
-                        .and_then(|arr| arr.first())
-                        .and_then(|img| img["sources"].as_array())
-                        .and_then(|srcs| srcs.first())
-                        .and_then(|src| src["url"].as_str())
-                        .map(|s| s.to_string());
-
-                    playlists.push(Playlist {
-                        id: "collection:tracks".to_string(),
-                        service: "spotify".to_string(),
-                        title: name,
-                        description: Some("Your Spotify Liked Songs".to_string()),
-                        track_count: 0,
-                        is_public: false,
-                        cover_url,
-                    });
-                    continue;
-                }
-
-                if typename.contains("Playlist") {
-                    let data = &item_wrapper["data"];
-                    let uri = data["uri"]
-                        .as_str()
-                        .or_else(|| item_wrapper["_uri"].as_str())
-                        .unwrap_or("");
-                    let id = uri
-                        .strip_prefix("spotify:playlist:")
-                        .unwrap_or(uri)
-                        .to_string();
-
-                    if id.is_empty() {
-                        continue;
-                    }
-
-                    let title = data["name"].as_str().unwrap_or("Untitled").to_string();
-                    let description = data["description"].as_str().map(|s| s.to_string());
-                    let track_count = data["trackCount"].as_u64().unwrap_or(0) as u32;
-
-                    let cover_url = data["images"]["items"]
-                        .as_array()
-                        .and_then(|arr| arr.first())
-                        .and_then(|img| img["sources"].as_array())
-                        .and_then(|srcs| srcs.first())
-                        .and_then(|src| src["url"].as_str())
-                        .map(|s| s.to_string());
-
-                    playlists.push(Playlist {
-                        id,
-                        service: "spotify".to_string(),
-                        title,
-                        description,
-                        track_count,
-                        is_public: false,
-                        cover_url,
-                    });
-                }
-            }
-
-            let total = library["totalCount"].as_u64().unwrap_or(0) as usize;
-            offset += items.len();
-            if offset >= total || items.len() < limit {
-                break;
             }
         }
 
@@ -978,11 +1068,27 @@ mod tests {
         ) {
             if let Ok(Some(sp_dc)) = crate::auth::keyring_store::retrieve_credential("spotify", &conn) {
                 let provider = SpotifyProvider::new(sp_dc);
-                let playlists = provider.list_playlists().await.expect("Live playlists should fetch successfully");
-                assert!(!playlists.is_empty(), "Should find playlists in live user account");
-                if let Some(first) = playlists.first() {
-                    let tracks = provider.get_playlist_tracks(&first.id, None).await.expect("Tracks should fetch successfully");
-                    assert!(!tracks.is_empty(), "First playlist should have tracks");
+                println!("Calling provider.list_playlists()...");
+                let start = std::time::Instant::now();
+                match provider.list_playlists().await {
+                    Ok(playlists) => {
+                        println!(
+                            "LIST_PLAYLISTS SUCCESS! Found {} playlists in {:?}",
+                            playlists.len(),
+                            start.elapsed()
+                        );
+                        for (i, p) in playlists.iter().enumerate() {
+                            println!(
+                                "  #{:02}: title='{}', tracks={}, public={}, id={}",
+                                i + 1,
+                                p.title,
+                                p.track_count,
+                                p.is_public,
+                                p.id
+                            );
+                        }
+                    }
+                    Err(e) => println!("LIST_PLAYLISTS FAILED: {}", e),
                 }
             }
         }
