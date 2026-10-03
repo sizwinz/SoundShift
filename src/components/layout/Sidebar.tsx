@@ -69,24 +69,12 @@ export function Sidebar({
       }`}
     >
       <div>
-        {/* Sidebar Header with Logo & Toggle Collapse Button */}
+        {/* Toggle Collapse Button */}
         <div
           className={`flex items-center p-2 border-b border-[#27272a]/50 ${
-            isCollapsed ? "justify-center" : "justify-between"
+            isCollapsed ? "justify-center" : "justify-end"
           }`}
         >
-          {!isCollapsed && (
-            <div className="flex items-center gap-2 pl-1">
-              <img
-                src="/app-logo.png"
-                alt="SoundShift"
-                className="w-5 h-5 object-contain"
-              />
-              <span className="font-mono text-xs font-bold tracking-wider text-zinc-200">
-                SoundShift
-              </span>
-            </div>
-          )}
           <button
             type="button"
             onClick={() => setIsCollapsed(!isCollapsed)}

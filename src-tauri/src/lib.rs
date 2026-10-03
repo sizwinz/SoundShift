@@ -42,11 +42,15 @@ pub fn run() {
                 active_transfers: Arc::new(Mutex::new(HashMap::new())),
             });
 
-            // Asynchronously center, reveal, and focus window after event loop initialization
+            // Asynchronously center, reveal, set icon, and focus window after event loop initialization
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                 if let Some(main_win) = handle.get_webview_window("main") {
+                    let icon_bytes = include_bytes!("../icons/icon.png");
+                    if let Ok(icon) = tauri::image::Image::from_bytes(icon_bytes) {
+                        let _ = main_win.set_icon(icon);
+                    }
                     let _ = main_win.center();
                     let _ = main_win.unminimize();
                     let _ = main_win.show();
