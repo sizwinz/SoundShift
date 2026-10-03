@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import {
   ListMusic,
   ArrowLeftRight,
+  History,
   ShieldCheck,
   Settings,
   ChevronLeft,
@@ -9,7 +10,7 @@ import {
   Radio,
 } from "lucide-react";
 
-export type NavTab = "playlists" | "transfers" | "accounts" | "settings";
+export type NavTab = "playlists" | "transfers" | "history" | "accounts" | "settings";
 
 interface SidebarProps {
   activeTab: NavTab;
@@ -44,6 +45,7 @@ export function Sidebar({
   const navItems = [
     { id: "playlists" as NavTab, label: "Playlists", icon: ListMusic },
     { id: "transfers" as NavTab, label: "Transfers", icon: ArrowLeftRight },
+    { id: "history" as NavTab, label: "History", icon: History },
     { id: "accounts" as NavTab, label: "Accounts", icon: ShieldCheck },
     { id: "settings" as NavTab, label: "Settings", icon: Settings },
   ];

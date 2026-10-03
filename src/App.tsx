@@ -6,6 +6,7 @@ import { PlaylistSelector } from "./components/playlists/PlaylistSelector";
 import { StagingTable } from "./components/diff/StagingTable";
 import { TransferTargetOptions } from "./components/diff/TransferConfirmModal";
 import { TelemetryDrawer } from "./components/transfer/TelemetryDrawer";
+import { TransferHistory } from "./components/history/TransferHistory";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { AudioProvider } from "./context/AudioContext";
 import { TransferProvider, useTransfer } from "./context/TransferContext";
@@ -133,6 +134,10 @@ function MainContent() {
               )
             )}
 
+            {activeTab === "history" && (
+              <TransferHistory onBrowsePlaylists={() => setActiveTab("playlists")} />
+            )}
+
             {activeTab === "settings" && (
               <div className="border border-[#27272a] rounded-lg bg-[#09090b] p-6 text-zinc-300">
                 <div className="text-sm font-medium mb-2">Application Settings</div>
@@ -146,7 +151,7 @@ function MainContent() {
       </div>
 
       {/* Global Minimizable Telemetry Drawer pinned at bottom */}
-      <TelemetryDrawer onNavigateToHistory={() => setActiveTab("transfers")} />
+      <TelemetryDrawer onNavigateToHistory={() => setActiveTab("history")} />
     </div>
   );
 }
