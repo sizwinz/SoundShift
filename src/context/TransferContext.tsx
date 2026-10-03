@@ -68,56 +68,76 @@ export function TransferProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!isTauri()) return;
 
-    let unlistenProgress: (() => void) | undefined;
-    let unlistenLog: (() => void) | undefined;
-    let unlistenAudit: (() => void) | undefined;
+    let isMounted = true;
+    const cleanups: Array<() => void> = [];
 
     const setupListeners = async () => {
-      unlistenProgress = await listen<TransferProgressPayload>(
-        "transfer:progress",
-        (event) => {
-          const payload = event.payload;
-          setProgress(payload);
-          if (
-            payload.stage === "transferring" ||
-            payload.stage === "completed" ||
-            payload.stage === "cancelled" ||
-            payload.stage === "failed"
-          ) {
-            setStage(payload.stage as TransferStage);
-          }
+      try {
+        const uProgress = await listen<TransferProgressPayload>(
+          "transfer:progress",
+          (event) => {
+            const payload = event.payload;
+            setProgress(payload);
+            if (
+              payload.stage === "transferring" ||
+              payload.stage === "completed" ||
+              payload.stage === "cancelled" ||
+              payload.stage === "failed"
+            ) {
+              setStage(payload.stage as TransferStage);
+            }
 
-          if (payload.current_track) {
-            setTrackEvents((prev) => [
-              {
-                id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-                track: payload.current_track || "Unknown Track",
-                workerId: payload.worker_id,
-                latencyMs: payload.latency_ms,
-                status: payload.http_status,
-                timestamp: Date.now(),
-              },
-              ...prev.slice(0, 99),
-            ]);
+            if (payload.current_track) {
+              setTrackEvents((prev) => [
+                {
+                  id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                  track: payload.current_track || "Unknown Track",
+                  workerId: payload.worker_id,
+                  latencyMs: payload.latency_ms,
+                  status: payload.http_status,
+                  timestamp: Date.now(),
+                },
+                ...prev.slice(0, 99),
+              ]);
+            }
           }
+        );
+
+        if (!isMounted) {
+          uProgress();
+        } else {
+          cleanups.push(uProgress);
         }
-      );
 
-      unlistenLog = await listen<TransferLogPayload>("transfer:log", (event) => {
-        setLogs((prev) => [event.payload, ...prev.slice(0, 199)]);
-      });
+        const uLog = await listen<TransferLogPayload>("transfer:log", (event) => {
+          setLogs((prev) => [event.payload, ...prev.slice(0, 199)]);
+        });
 
-      unlistenAudit = await listen<AuditResult>("transfer:audit", (event) => {
-        setAuditResult(event.payload);
-      });
+        if (!isMounted) {
+          uLog();
+        } else {
+          cleanups.push(uLog);
+        }
+
+        const uAudit = await listen<AuditResult>("transfer:audit", (event) => {
+          setAuditResult(event.payload);
+        });
+
+        if (!isMounted) {
+          uAudit();
+        } else {
+          cleanups.push(uAudit);
+        }
+      } catch (e) {
+        console.error("Failed to setup transfer listeners:", e);
+      }
     };
 
     setupListeners();
 
     return () => {
-      if (unlistenProgress) unlistenProgress();
-      if (unlistenLog) unlistenLog();
-      if (unlistenAudit) unlistenAudit();
+      isMounted = false;
+      cleanups.forEach((c) => c());
     };
   }, []);
 
