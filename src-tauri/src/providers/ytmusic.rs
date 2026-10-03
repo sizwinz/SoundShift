@@ -21,11 +21,23 @@ impl YouTubeMusicProvider {
                     let mut kv = part.trim().splitn(2, '=');
                     let k = kv.next()?.trim();
                     let v = kv.next()?.trim();
-                    if k == "SAPISID" || k == "__Secure-3PAPISID" {
+                    if k == "SAPISID" {
                         Some(v.to_string())
                     } else {
                         None
                     }
+                })
+                .or_else(|| {
+                    token.split(';').find_map(|part| {
+                        let mut kv = part.trim().splitn(2, '=');
+                        let k = kv.next()?.trim();
+                        let v = kv.next()?.trim();
+                        if k == "__Secure-3PAPISID" {
+                            Some(v.to_string())
+                        } else {
+                            None
+                        }
+                    })
                 })
                 .unwrap_or_else(|| token.clone());
             (token, extracted)
@@ -54,6 +66,8 @@ impl YouTubeMusicProvider {
             HeaderValue::from_str(&auth_val).map_err(|e| e.to_string())?,
         );
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        headers.insert("Origin", HeaderValue::from_static("https://music.youtube.com"));
+        headers.insert("Referer", HeaderValue::from_static("https://music.youtube.com/"));
         headers.insert("X-Origin", HeaderValue::from_static("https://music.youtube.com"));
         headers.insert("X-Goog-AuthUser", HeaderValue::from_static("0"));
 
@@ -246,9 +260,10 @@ impl MusicProvider for YouTubeMusicProvider {
                         if let Some(sub_runs) = row["subtitle"]["runs"].as_array() {
                             let text: String = sub_runs.iter().filter_map(|r| r["text"].as_str()).collect();
                             description = Some(text.clone());
-                            // Attempt extracting count digits
+                            // Attempt extracting count digits (handling comma-separated numbers like "1,054 tracks")
                             for word in text.split_whitespace() {
-                                if let Ok(num) = word.parse::<u32>() {
+                                let clean = word.replace(',', "");
+                                if let Ok(num) = clean.parse::<u32>() {
                                     track_count = num;
                                 }
                             }
@@ -315,8 +330,11 @@ impl MusicProvider for YouTubeMusicProvider {
         let mut all_tracks = Vec::new();
         let mut continuation_token: Option<String> = None;
 
-        // Parse initial batch
-        let shelf = json.pointer("/contents/singleColumnBrowseResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents/0/musicPlaylistShelfRenderer")
+        // Parse initial batch - support both twoColumnBrowseResultsRenderer (desktop web)
+        // and singleColumnBrowseResultsRenderer (mobile/tablet layout)
+        let shelf = json.pointer("/contents/twoColumnBrowseResultsRenderer/secondaryContents/sectionListRenderer/contents/0/musicPlaylistShelfRenderer")
+            .or_else(|| json.pointer("/contents/twoColumnBrowseResultsRenderer/secondaryContents/sectionListRenderer/contents/0/musicShelfRenderer"))
+            .or_else(|| json.pointer("/contents/singleColumnBrowseResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents/0/musicPlaylistShelfRenderer"))
             .or_else(|| json.pointer("/contents/singleColumnBrowseResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents/0/musicShelfRenderer"));
 
         if let Some(shelf_obj) = shelf {
@@ -336,11 +354,19 @@ impl MusicProvider for YouTubeMusicProvider {
                 }
 
                 all_tracks.extend(chunk);
-            }
 
-            continuation_token = shelf_obj.pointer("/continuations/0/nextContinuationData/continuation")
-                .and_then(|c| c.as_str())
-                .map(|s| s.to_string());
+                // Continuation token can be in continuations array or embedded continuationItemRenderer
+                continuation_token = shelf_obj.pointer("/continuations/0/nextContinuationData/continuation")
+                    .and_then(|c| c.as_str())
+                    .map(|s| s.to_string())
+                    .or_else(|| {
+                        items.iter().find_map(|item| {
+                            item.pointer("/continuationItemRenderer/continuationEndpoint/continuationCommand/token")
+                                .and_then(|t| t.as_str())
+                                .map(|s| s.to_string())
+                        })
+                    });
+            }
         }
 
         // Paginate continuations in 100-track chunks per D-02
@@ -368,32 +394,40 @@ impl MusicProvider for YouTubeMusicProvider {
 
             let cont_json: Value = cont_res.json().await.map_err(|e| e.to_string())?;
 
-            let cont_shelf = cont_json.pointer("/continuationContents/musicPlaylistShelfContinuation")
-                .or_else(|| cont_json.pointer("/continuationContents/musicShelfContinuation"));
+            let cont_items = cont_json.pointer("/continuationContents/musicPlaylistShelfContinuation/contents")
+                .or_else(|| cont_json.pointer("/continuationContents/musicShelfContinuation/contents"))
+                .or_else(|| cont_json.pointer("/onResponseReceivedActions/0/appendContinuationItemsAction/continuationItems"))
+                .and_then(|c| c.as_array());
 
-            if let Some(cont_obj) = cont_shelf {
-                if let Some(items) = cont_obj["contents"].as_array() {
-                    let mut chunk = Vec::new();
-                    for item in items {
-                        let renderer = &item["musicResponsiveListItemRenderer"];
-                        if !renderer.is_null() {
-                            if let Some(track) = Self::parse_list_item_renderer(renderer) {
-                                chunk.push(track);
-                            }
+            if let Some(items) = cont_items {
+                let mut chunk = Vec::new();
+                for item in items {
+                    let renderer = &item["musicResponsiveListItemRenderer"];
+                    if !renderer.is_null() {
+                        if let Some(track) = Self::parse_list_item_renderer(renderer) {
+                            chunk.push(track);
                         }
-                    }
-
-                    if !chunk.is_empty() {
-                        if let Some(ref sender) = tx {
-                            let _ = sender.send(chunk.clone()).await;
-                        }
-                        all_tracks.extend(chunk);
                     }
                 }
 
-                continuation_token = cont_obj.pointer("/continuations/0/nextContinuationData/continuation")
+                if !chunk.is_empty() {
+                    if let Some(ref sender) = tx {
+                        let _ = sender.send(chunk.clone()).await;
+                    }
+                    all_tracks.extend(chunk);
+                }
+
+                continuation_token = cont_json.pointer("/continuationContents/musicPlaylistShelfContinuation/continuations/0/nextContinuationData/continuation")
+                    .or_else(|| cont_json.pointer("/continuationContents/musicShelfContinuation/continuations/0/nextContinuationData/continuation"))
                     .and_then(|c| c.as_str())
-                    .map(|s| s.to_string());
+                    .map(|s| s.to_string())
+                    .or_else(|| {
+                        items.iter().find_map(|item| {
+                            item.pointer("/continuationItemRenderer/continuationEndpoint/continuationCommand/token")
+                                .and_then(|t| t.as_str())
+                                .map(|s| s.to_string())
+                        })
+                    });
             } else {
                 break;
             }
@@ -650,16 +684,10 @@ mod tests {
             if let Ok(Some(token)) = crate::auth::keyring_store::retrieve_credential("ytmusic", &conn) {
                 println!("FOUND YTMUSIC TOKEN (len={})", token.len());
                 let provider = YouTubeMusicProvider::new(token);
-                println!("Calling list_playlists...");
-                match provider.list_playlists().await {
-                    Ok(playlists) => {
-                        println!("LIST_PLAYLISTS SUCCESS! Found {} playlists", playlists.len());
-                        for (i, p) in playlists.iter().enumerate() {
-                            println!("  #{}: title='{}', tracks={}, id={}", i + 1, p.title, p.track_count, p.id);
-                        }
-                    }
-                    Err(e) => println!("LIST_PLAYLISTS ERROR: {}", e),
-                }
+
+                let playlists = provider.list_playlists().await.expect("Failed to list playlists");
+                println!("FOUND {} PLAYLISTS", playlists.len());
+                assert!(!playlists.is_empty(), "Expected at least 1 playlist");
             } else {
                 println!("NO YTMUSIC CREDENTIAL IN DB!");
             }

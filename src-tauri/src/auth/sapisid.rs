@@ -20,7 +20,7 @@ pub fn generate_sapisid_hash_with_timestamp(sapisid: &str, origin: &str, timesta
     hasher.update(payload.as_bytes());
     let hash = format!("{:x}", hasher.finalize());
 
-    format!("SAPISIDHASH {}_{}_u", timestamp, hash)
+    format!("SAPISIDHASH {}_{}", timestamp, hash)
 }
 
 /// Simple cookie representation for extractor functions.
@@ -80,11 +80,9 @@ mod tests {
     fn test_sapisid_hash_format() {
         let hash_header = generate_sapisid_hash("test_sapisid_value", "https://music.youtube.com");
         assert!(hash_header.starts_with("SAPISIDHASH "));
-        assert!(hash_header.ends_with("_u"));
 
         let parts: Vec<&str> = hash_header
             .trim_start_matches("SAPISIDHASH ")
-            .trim_end_matches("_u")
             .split('_')
             .collect();
 
@@ -108,7 +106,7 @@ mod tests {
         assert_eq!(result1, result2);
         assert_eq!(
             result1,
-            "SAPISIDHASH 1700000000_76e48436c0d5c167b88646bf016ac64ccd2a0f07_u"
+            "SAPISIDHASH 1700000000_76e48436c0d5c167b88646bf016ac64ccd2a0f07"
         );
     }
 
