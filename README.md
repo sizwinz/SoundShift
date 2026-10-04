@@ -1,145 +1,122 @@
 <div align="center">
-  <img src="app-icon.png" alt="SoundShift Logo" width="128" height="128" />
+  <img src="public/app-logo.png" alt="SoundShift logo" width="112" height="112" />
   <h1>SoundShift</h1>
-  <p><strong>Deterministic, zero-DevTools local-first playlist migration and backup</strong></p>
+  <p><strong>Local-first playlist migration with inspectable matching and safe rollback</strong></p>
+  <p>
+    <a href="https://github.com/sizwinz/SoundShift">Repository</a> ·
+    <a href="https://github.com/sizwinz/SoundShift/issues">Issues</a> ·
+    <a href="https://github.com/sizwinz/SoundShift/discussions">Discussions</a>
+  </p>
 </div>
 
----
+SoundShift is an open-source cross-platform desktop app for moving playlists between Spotify and YouTube Music without uploading your library to a cloud service. It uses native WebView sessions for authentication, deterministic matching safeguards, a reviewable staging diff, durable transfer jobs, and local snapshots for recovery.
 
-SoundShift is an open-source, local-first desktop application engineered to migrate, synchronize, and back up music playlists across streaming services (Spotify and YouTube Music).
+> SoundShift transfers playlist metadata only. It does not download, rip, encode, or store audio files.
 
-Designed with zero subscription paywalls, zero track count caps, and zero developer API key requirements, SoundShift runs entirely on your local machine with native WebView authentication, deterministic multi-stage matching heuristics, an inspectable staging "diff" interface, and 1-click snapshot rollback.
+## Why SoundShift
 
----
+- **Local-first by design:** Credentials, snapshots, transfer history, and match data stay on your device. There is no SoundShift telemetry or hosted migration backend.
+- **No manual DevTools setup:** Connect providers through isolated native login sessions instead of copying cookies or API headers by hand.
+- **Review before mutation:** Every proposed destination match appears in a staging diff before tracks are written.
+- **Conservative matching:** ISRC and normalized metadata checks are combined with duration-aware fuzzy matching. Uncertain candidates are routed to review instead of being silently accepted.
+- **Durable transfers:** Jobs, operations, events, snapshots, and recovery state are persisted locally so interrupted work can be inspected and recovered.
+- **Safe rollback:** Pre-mutation snapshots support restoring transfer changes from the local history view.
+- **Large playlist UX:** The staging table uses virtualization for responsive review of large playlists.
 
-## Key Features
+## Supported providers
 
-- **Zero DevTools Onboarding:** Embedded native WebView sessions automatically capture and store authenticated session credentials into your operating system's native secure credential store (Windows Credential Locker, macOS Keychain, Linux Secret Service).
-- **Deterministic 4-Stage Matching:**
-  - **Pass 1 (ISRC Exact Match):** Canonical international recording codes guarantee exact audio recording matches.
-  - **Pass 2 (Direct Metadata Search):** Normalized search query execution against destination catalog APIs.
-  - **Pass 3 (Fuzzy Text & Duration Anchor):** Levenshtein and token-sorted similarity evaluation anchored by a strict duration delta bound (<= 4s for Exact Green; 4s to 15s for Ambiguous Amber).
-  - **Pass 4 (Variant Rejection):** Automatic rejection of tracks with duration variance > 15s to eliminate unwanted live cuts, extended mixes, interviews, and acoustic re-recordings.
-- **Inspectable Staging Diff ("Git Diff for Playlists"):** Review all proposed matches before making any changes to your library. Categorized into Exact (Green), Ambiguous (Amber), and Not Found (Red).
-- **High-Performance Virtualization:** Sustained 60 FPS scrolling on 15,000+ track entities powered by `@tanstack/react-virtual`.
-- **In-App Audio Preview:** 30-second HTML5 audio previews inside the Disambiguation Drawer to verify ambiguous matches before confirming.
-- **Resilient Batch Transfer:** Optimized chunked atomic mutations with automatic exponential backoff on HTTP 429 and 409 responses, preserving exact playlist order.
-- **Safety & 1-Click Rollback:** Transactional pre-mutation snapshots saved in local SQLite storage enable immediate 1-click undo for every transfer.
-- **Strictly Local-First Privacy:** Zero third-party telemetry, zero cloud backends, zero external proxies. All data and credentials stay on your device.
+| Provider | Playlist read | Playlist write | Authentication |
+| --- | ---: | ---: | --- |
+| Spotify | Yes | Yes | Native WebView session |
+| YouTube Music | Yes | Yes | Native WebView session |
 
----
+Provider behavior can change independently of SoundShift. The app uses retries, throttling, reconciliation, and provider-specific mutation safeguards to verify what was actually written.
 
-## Tech Stack
+## Workflow
 
-| Layer | Technologies | Rationale |
-| --- | --- | --- |
-| **Desktop Shell** | Tauri v2 | Sub-15MB installer, <= 85MB idle RAM, direct OS WebView integration |
-| **Core Systems Engine** | Rust 1.80+ (2021 Edition) | High-throughput asynchronous pipeline, native HTTP/2 handling via `reqwest`, SQLite via `rusqlite` |
-| **Frontend UI** | React 19, TypeScript, Vite | Modern declarative rendering, strict compile-time types |
-| **Styling & Components** | Tailwind CSS v4, Lucide Icons | Dark-first AMOLED design system, responsive layouts |
-| **List Virtualization** | `@tanstack/react-virtual` v3 | Virtualized DOM sustaining 60 FPS on 15,000+ tracks |
-| **Security** | OS Keyring (`keyring-rs`), AES-256-GCM | Encrypted local token vault |
+1. **Connect** Spotify and/or YouTube Music in the Accounts view.
+2. **Select** a source playlist and destination provider.
+3. **Analyze** tracks through the local matching pipeline.
+4. **Review** exact, ambiguous, unresolved, and rejected candidates in the staging diff.
+5. **Transfer** only the tracks you approve.
+6. **Verify or recover** from Transfer History using durable events and snapshots.
 
----
+## Matching safety
 
-## Architecture Overview
+SoundShift favors transparent decisions over aggressive guesses:
 
-```
-+-----------------------------------------------------------------+
-|                    SoundShift Desktop Shell                     |
-|                      (Tauri v2 + Rust)                          |
-+--------------------------------+--------------------------------+
-| Frontend (React 19 + Vite)     | Backend Core (Rust + Tokio)    |
-| - Virtualized Staging Table    | - Embedded WebView Auth Trap   |
-| - Disambiguation Drawer        | - 4-Stage Matching Pipeline    |
-| - Audio Preview Singleton      | - Chunked Batch Mutation Pool  |
-| - Real-Time Telemetry Console  | - SQLite Snapshot & Rollback   |
-| - Transfer History Dashboard   | - OS Keyring & AES-256 Vault   |
-+--------------------------------+--------------------------------+
-```
+- Local match cache and exact identifiers are checked first.
+- Metadata is normalized before provider searches.
+- Candidate confidence is anchored by track duration differences.
+- Live versions, extended mixes, interviews, and other high-delta variants are rejected or sent for review.
+- Ambiguous rows are not included in bulk transfer unless they satisfy the app's safety rules.
 
----
+## Technology
 
-## Getting Started
+- **Desktop:** Tauri v2
+- **Core:** Rust 2021, Tokio, Reqwest, SQLite via rusqlite
+- **Frontend:** React 19, TypeScript, Vite, Tailwind CSS
+- **UX:** TanStack Virtual, Lucide icons, responsive dark-first interface
+- **Credential storage:** OS keyring with encrypted local fallback where required
+
+## Development setup
 
 ### Prerequisites
 
-Ensure you have the following installed on your system:
+- Node.js 18 or newer
+- npm 9 or newer
+- Rust stable with `rustup`
+- Platform dependencies required by Tauri v2
+  - Windows: WebView2 and C++ Build Tools
+  - macOS: Xcode Command Line Tools
+  - Linux: WebKitGTK and GTK development packages
 
-- **Node.js**: v18.0.0 or higher
-- **npm**: v9.0.0 or higher
-- **Rust**: 1.80.0 or higher (`rustup default stable`)
-- **Platform Dependencies**:
-  - **Windows**: Microsoft Edge WebView2 (pre-installed on Windows 10/11) and C++ Build Tools.
-  - **macOS**: Xcode Command Line Tools.
-  - **Linux**: `libwebkit2gtk-4.1-dev`, `build-essential`, `curl`, `wget`, `file`, `libssl-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`.
+### Run locally
 
-### Installation
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/username/SoundShift.git
-   cd SoundShift
-   ```
-
-2. Install frontend dependencies:
-   ```bash
-   npm install
-   ```
-
-3. Run in development mode:
-   ```bash
-   npm run tauri dev
-   ```
-
-4. Build a production installer:
-   ```bash
-   npm run tauri build
-   ```
-
----
-
-## Testing & Quality Assurance
-
-SoundShift includes automated unit, integration, and benchmark test suites across both frontend and backend.
-
-### Run Frontend Tests
 ```bash
-npm test
+git clone https://github.com/sizwinz/SoundShift.git
+cd SoundShift
+npm install
+npm run tauri dev
 ```
 
-### Run Rust Tests
+Build the desktop application with:
+
 ```bash
+npm run tauri build
+```
+
+### Validate changes
+
+```bash
+npm test -- --run
+npm run build
 cargo test --manifest-path src-tauri/Cargo.toml
+cargo clippy --manifest-path src-tauri/Cargo.toml
 ```
 
-### Run Headless Matching Benchmark
+The matching benchmark can be run with:
+
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --test matching_benchmark -- --nocapture
 ```
 
-### Run Code Linter & Typecheck
-```bash
-npm run build
-cargo clippy --manifest-path src-tauri/Cargo.toml
-```
+## Privacy and security
 
----
+- No SoundShift analytics, telemetry, or third-party tracking.
+- Authentication material is kept in the OS credential manager where available.
+- Local SQLite data contains transfer state, caches, and snapshots; it is not uploaded by SoundShift.
+- Network requests go directly to the connected streaming providers.
+- Disconnecting a provider removes its stored credentials while preserving non-sensitive match history where applicable.
 
-## Security & Privacy
+## Project status
 
-- **No Remote Telemetry:** SoundShift does not send usage metrics, error logs, or analytics to any remote server.
-- **Local Credential Storage:** Session tokens and authentication states are saved in the operating system's native secret storage using standard platform APIs.
-- **Direct Peer Networking:** All API communications are executed directly from your local network to Spotify and YouTube Music endpoints.
-
----
+SoundShift is under active development. Spotify and YouTube Music playlist migration are the current focus. APIs and provider internals may change as the upstream services evolve, so please report reproducible failures with provider, platform, playlist size, and relevant transfer-log details while omitting credentials or cookies.
 
 ## Contributing
 
-Contributions are welcome. Please read [CONTRIBUTING.md](.github/CONTRIBUTING.md) for details on code formatting, pull request workflows, and architectural guidelines.
-
----
+Bug reports, provider compatibility reports, matching improvements, UI work, and documentation contributions are welcome. Please open an issue before large architectural changes and keep credentials, cookies, access tokens, and private playlist data out of issues and pull requests.
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+SoundShift is licensed under the MIT License. See [LICENSE](LICENSE).
