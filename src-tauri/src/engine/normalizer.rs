@@ -31,10 +31,7 @@ static CLEAN_BRACKETS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 /// Canonicalizes punctuation, decomposes diacritics via NFKD, and maps symbols per D-11.
 pub fn canonicalize_string(input: &str) -> String {
     // 1. Unicode NFKD decomposition and strip combining diacritical marks
-    let decomposed: String = input
-        .nfkd()
-        .filter(|c| !is_combining_mark(*c))
-        .collect();
+    let decomposed: String = input.nfkd().filter(|c| !is_combining_mark(*c)).collect();
 
     // 2. Straighten quotes, map dashes, map ampersands to 'and'
     let mut replaced = String::with_capacity(decomposed.len());
@@ -94,8 +91,14 @@ pub fn normalize_title(raw_title: &str) -> (String, Vec<String>) {
     let mut prev = String::new();
     while prev != working_title {
         prev = working_title.clone();
-        working_title = CLEAN_BRACKETS_REGEX.replace_all(&working_title, "").to_string();
-        working_title = working_title.trim().trim_end_matches('-').trim().to_string();
+        working_title = CLEAN_BRACKETS_REGEX
+            .replace_all(&working_title, "")
+            .to_string();
+        working_title = working_title
+            .trim()
+            .trim_end_matches('-')
+            .trim()
+            .to_string();
     }
 
     // 4. Canonicalize string (NFKD diacritics, ampersands, punctuation) per D-11
@@ -103,7 +106,6 @@ pub fn normalize_title(raw_title: &str) -> (String, Vec<String>) {
 
     (canonical, feat_artists)
 }
-
 
 /// Computes string similarity using Jaro-Winkler with token-sort heuristic per D-12.
 pub fn calculate_similarity(s1: &str, s2: &str) -> f64 {
@@ -181,14 +183,18 @@ mod tests {
         assert_eq!(canonicalize_string("Báilame"), "bailame");
         assert_eq!(canonicalize_string("Café Tacvba"), "cafe tacvba");
         assert_eq!(canonicalize_string("Sigur Rós"), "sigur ros");
-        assert_eq!(canonicalize_string("Simon & Garfunkel"), "simon and garfunkel");
+        assert_eq!(
+            canonicalize_string("Simon & Garfunkel"),
+            "simon and garfunkel"
+        );
         assert_eq!(canonicalize_string("Don’t Stop"), "don't stop");
     }
 
     #[test]
     fn test_token_sorted_similarity() {
         // Transposed words should achieve high similarity score
-        let score = calculate_similarity("Around the World Daft Punk", "Daft Punk Around the World");
+        let score =
+            calculate_similarity("Around the World Daft Punk", "Daft Punk Around the World");
         assert!(score >= 0.95);
 
         // Identical strings should be 1.0

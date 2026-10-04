@@ -1,5 +1,6 @@
 import { ServiceAccount } from '../../types/auth';
-import { CheckCircle2, AlertTriangle, Radio, LogIn, LogOut, RefreshCw } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, LogIn, LogOut, RefreshCw } from 'lucide-react';
+import { ProviderLogo } from '../providers/ProviderLogo';
 
 interface AccountCardProps {
   account: ServiceAccount;
@@ -22,8 +23,8 @@ export function AccountCard({
       <div>
         <div className="flex items-center justify-between gap-3 mb-3">
           <div className="flex items-center gap-2.5">
-            <div className="flex items-center justify-center w-9 h-9 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-200">
-              <Radio className="w-5 h-5" />
+            <div className="flex items-center justify-center w-9 h-9 rounded-md bg-zinc-900 border border-zinc-800">
+              <ProviderLogo provider={account.id} size="md" />
             </div>
             <div>
               <h3 className="text-sm font-semibold text-zinc-100 tracking-tight">

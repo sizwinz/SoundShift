@@ -95,6 +95,27 @@ pub async fn list_provider_playlists(
     Ok(playlists)
 }
 
+/// Performs a live provider canary instead of treating stored credentials as
+/// proof that the account is still connected.
+#[tauri::command]
+pub async fn check_provider_connection(
+    app: tauri::AppHandle,
+    service: String,
+) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let token = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        crate::auth::keyring_store::retrieve_credential(&service, &conn)?
+            .ok_or_else(|| format!("No active session found for {}", service))?
+    };
+
+    match service.as_str() {
+        "spotify" => SpotifyProvider::new(token).canary().await,
+        "ytmusic" => YouTubeMusicProvider::new(token).canary().await,
+        _ => Err(format!("Unsupported service: {}", service)),
+    }
+}
+
 /// Ingests playlist tracks in 100-track streaming chunks per D-02.
 /// Emits `playlist:ingest_progress` events to frontend for instant inspection.
 #[tauri::command]
@@ -169,9 +190,7 @@ pub async fn fetch_playlist_tracks(
         }
     });
 
-    let tracks = provider
-        .get_playlist_tracks(&playlist_id, Some(tx))
-        .await?;
+    let tracks = provider.get_playlist_tracks(&playlist_id, Some(tx)).await?;
 
     let _ = stream_task.await;
 
@@ -281,6 +300,9 @@ pub async fn resolve_track_by_url(
     } else if let Some(first) = candidates.into_iter().next() {
         Ok(first)
     } else {
-        Err(format!("No track found on {} matching '{}'", service, extracted_id))
+        Err(format!(
+            "No track found on {} matching '{}'",
+            service, extracted_id
+        ))
     }
 }

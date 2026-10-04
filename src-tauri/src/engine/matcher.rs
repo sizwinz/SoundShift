@@ -59,7 +59,8 @@ pub fn score_candidate(
             if let Some(stripped) = cand_clean_title.strip_prefix(&format!("{} - ", clean_artist)) {
                 cand_titles_to_test.push(stripped.trim().to_string());
             } else if let Some(stripped) = cand_clean_title.strip_prefix(&clean_artist) {
-                cand_titles_to_test.push(stripped.trim().trim_start_matches('-').trim().to_string());
+                cand_titles_to_test
+                    .push(stripped.trim().trim_start_matches('-').trim().to_string());
             }
             if let Some(stripped) = cand_clean_title.strip_suffix(&format!(" - {}", clean_artist)) {
                 cand_titles_to_test.push(stripped.trim().to_string());
@@ -170,7 +171,8 @@ pub async fn match_track(
                 if let Ok(isrc_results) = provider.search_track(&query).await {
                     for candidate in isrc_results {
                         let delta_ms = if source.duration_ms > 0 && candidate.duration_ms > 0 {
-                            (candidate.duration_ms as i64 - source.duration_ms as i64).unsigned_abs()
+                            (candidate.duration_ms as i64 - source.duration_ms as i64)
+                                .unsigned_abs()
                         } else {
                             0
                         };
@@ -206,7 +208,9 @@ pub async fn match_track(
     // Pass 3: Duration-Anchored Fuzzy Search (MTCH-03 through MTCH-06, D-05, D-06, D-07)
     let (clean_title, feat_artists) = normalize_title(&source.title);
     let primary_artist = source.artists.first().map(|s| s.as_str()).unwrap_or("");
-    let search_query = format!("{} {}", clean_title, primary_artist).trim().to_string();
+    let search_query = format!("{} {}", clean_title, primary_artist)
+        .trim()
+        .to_string();
 
     let mut raw_candidates = Vec::new();
     if let Ok(_permit) = rate_limiter.acquire().await {
@@ -245,7 +249,8 @@ pub async fn match_track(
         let best_track = best.track.clone();
         let best_sim = best.similarity;
         let best_delta = best.duration_delta_ms;
-        let top_candidates: Vec<MatchCandidate> = scored_candidates.iter().take(3).cloned().collect();
+        let top_candidates: Vec<MatchCandidate> =
+            scored_candidates.iter().take(3).cloned().collect();
 
         // Exact Match (Green - MTCH-04): delta <= 4s and similarity >= 0.85
         if best_delta <= 4_000 && best_sim >= 0.85 {
@@ -353,7 +358,8 @@ mod tests {
         };
 
         let (clean_title, feat) = normalize_title(&source.title);
-        let scored = score_candidate(&source, &candidate, &clean_title, &feat).expect("should score");
+        let scored =
+            score_candidate(&source, &candidate, &clean_title, &feat).expect("should score");
 
         assert!(scored.duration_delta_ms <= 4_000);
         assert!(scored.similarity >= 0.85);
@@ -423,7 +429,8 @@ mod tests {
         };
 
         let (clean_title, feat) = normalize_title(&source.title);
-        let scored = score_candidate(&source, &candidate, &clean_title, &feat).expect("should score");
+        let scored =
+            score_candidate(&source, &candidate, &clean_title, &feat).expect("should score");
 
         assert!(scored.duration_delta_ms > 4_000);
         assert!(scored.duration_delta_ms <= 15_000);

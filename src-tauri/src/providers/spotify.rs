@@ -47,7 +47,12 @@ impl SpotifyProvider {
 
         // Synchronize with Spotify server time for exact clock alignment
         let mut server_time_secs = now_ms / 1000;
-        if let Ok(time_res) = self.client.get("https://open.spotify.com/api/server-time").send().await {
+        if let Ok(time_res) = self
+            .client
+            .get("https://open.spotify.com/api/server-time")
+            .send()
+            .await
+        {
             if let Ok(time_json) = time_res.json::<Value>().await {
                 if let Some(st) = time_json["serverTime"].as_u64() {
                     server_time_secs = st;
@@ -97,8 +102,14 @@ impl SpotifyProvider {
 
         if !res.status().is_success() {
             let status = res.status();
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                self.invalidate_access_token().await;
+            }
             let body = res.text().await.unwrap_or_default();
-            return Err(format!("Spotify token exchange error ({}): {}", status, body));
+            return Err(format!(
+                "Spotify token exchange error ({}): {}",
+                status, body
+            ));
         }
 
         let json: Value = res
@@ -114,6 +125,11 @@ impl SpotifyProvider {
         let mut write_guard = self.access_token.write().await;
         *write_guard = Some(token.clone());
         Ok(token)
+    }
+
+    pub async fn invalidate_access_token(&self) {
+        let mut write_guard = self.access_token.write().await;
+        *write_guard = None;
     }
 
     /// Executes a GraphQL query against Spotify's internal Pathfinder Partner API.
@@ -183,6 +199,9 @@ impl SpotifyProvider {
 
         if !res.status().is_success() {
             let status = res.status();
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                self.invalidate_access_token().await;
+            }
             let body = res.text().await.unwrap_or_default();
             return Err(format!(
                 "Spotify Pathfinder error ({}) status {}: {}",
@@ -190,10 +209,12 @@ impl SpotifyProvider {
             ));
         }
 
-        let json: Value = res
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse Spotify Pathfinder JSON ({}): {}", operation, e))?;
+        let json: Value = res.json().await.map_err(|e| {
+            format!(
+                "Failed to parse Spotify Pathfinder JSON ({}): {}",
+                operation, e
+            )
+        })?;
 
         if let Some(errors) = json.get("errors") {
             if !errors.is_null() {
@@ -240,10 +261,7 @@ impl SpotifyProvider {
 
     /// Normalizes track entities returned by Pathfinder queries (fetchPlaylist, fetchLibraryTracks, searchDesktop).
     pub fn parse_pathfinder_track(data: &Value, fallback_uri: Option<&str>) -> Option<SourceTrack> {
-        let uri = data["uri"]
-            .as_str()
-            .or(fallback_uri)
-            .unwrap_or("");
+        let uri = data["uri"].as_str().or(fallback_uri).unwrap_or("");
 
         let id = if let Some(stripped) = uri.strip_prefix("spotify:track:") {
             stripped.to_string()
@@ -363,7 +381,8 @@ impl MusicProvider for SpotifyProvider {
     async fn list_playlists(&self) -> Result<Vec<Playlist>, String> {
         let mut playlists = Vec::new();
         let mut seen_playlist_ids = std::collections::HashSet::new();
-        let mut folder_queue: std::collections::VecDeque<Option<String>> = std::collections::VecDeque::new();
+        let mut folder_queue: std::collections::VecDeque<Option<String>> =
+            std::collections::VecDeque::new();
         folder_queue.push_back(None); // None represents root library
         let mut visited_folders = std::collections::HashSet::new();
 
@@ -473,7 +492,9 @@ impl MusicProvider for SpotifyProvider {
 
                         let title = data["name"].as_str().unwrap_or("Untitled").to_string();
                         let description = data["description"].as_str().map(|s| s.to_string());
-                        let can_edit = data["currentUserCapabilities"]["canEditItems"].as_bool().unwrap_or(true);
+                        let can_edit = data["currentUserCapabilities"]["canEditItems"]
+                            .as_bool()
+                            .unwrap_or(true);
                         let is_public = !can_edit;
                         let initial_count = data["count"]
                             .as_u64()
@@ -711,7 +732,11 @@ impl MusicProvider for SpotifyProvider {
         Ok(results)
     }
 
-    async fn create_playlist(&self, title: &str, description: Option<&str>) -> Result<String, String> {
+    async fn create_playlist(
+        &self,
+        title: &str,
+        description: Option<&str>,
+    ) -> Result<String, String> {
         let token = self.get_access_token().await?;
 
         // Retrieve current user profile ID
@@ -766,7 +791,10 @@ impl MusicProvider for SpotifyProvider {
         track_ids: &[String],
     ) -> Result<(), String> {
         let token = self.get_access_token().await?;
-        let url = format!("https://api.spotify.com/v1/playlists/{}/tracks", playlist_id);
+        let url = format!(
+            "https://api.spotify.com/v1/playlists/{}/tracks",
+            playlist_id
+        );
 
         for chunk in track_ids.chunks(100) {
             let uris: Vec<String> = chunk
@@ -805,7 +833,10 @@ impl MusicProvider for SpotifyProvider {
         track_ids: &[String],
     ) -> Result<(), String> {
         let token = self.get_access_token().await?;
-        let url = format!("https://api.spotify.com/v1/playlists/{}/tracks", playlist_id);
+        let url = format!(
+            "https://api.spotify.com/v1/playlists/{}/tracks",
+            playlist_id
+        );
 
         for chunk in track_ids.chunks(100) {
             let tracks: Vec<Value> = chunk
@@ -834,7 +865,10 @@ impl MusicProvider for SpotifyProvider {
             if !res.status().is_success() {
                 let status = res.status();
                 let text = res.text().await.unwrap_or_default();
-                return Err(format!("Spotify remove_tracks failed ({}): {}", status, text));
+                return Err(format!(
+                    "Spotify remove_tracks failed ({}): {}",
+                    status, text
+                ));
             }
         }
 
@@ -859,7 +893,10 @@ impl MusicProvider for SpotifyProvider {
         if !res.status().is_success() {
             let status = res.status();
             let text = res.text().await.unwrap_or_default();
-            return Err(format!("Spotify delete_playlist failed ({}): {}", status, text));
+            return Err(format!(
+                "Spotify delete_playlist failed ({}): {}",
+                status, text
+            ));
         }
 
         Ok(())
@@ -975,7 +1012,10 @@ mod tests {
         assert_eq!(track.duration_ms, 31384);
         assert!(!track.is_explicit);
         assert!(track.is_playable);
-        assert_eq!(track.thumbnail_url, Some("https://image-cdn.spotifycdn.com/cover.jpg".to_string()));
+        assert_eq!(
+            track.thumbnail_url,
+            Some("https://image-cdn.spotifycdn.com/cover.jpg".to_string())
+        );
     }
 
     #[test]
@@ -1007,8 +1047,11 @@ mod tests {
             }
         });
 
-        let track = SpotifyProvider::parse_pathfinder_track(&json, Some("spotify:track:1AvLUHxSunGMWWRfEFmWSC"))
-            .expect("Should parse with fallback URI");
+        let track = SpotifyProvider::parse_pathfinder_track(
+            &json,
+            Some("spotify:track:1AvLUHxSunGMWWRfEFmWSC"),
+        )
+        .expect("Should parse with fallback URI");
         assert_eq!(track.id, "1AvLUHxSunGMWWRfEFmWSC");
         assert_eq!(track.title, "A Song of Ice and Fire");
         assert_eq!(track.artists, vec!["Ramin Djawadi"]);
@@ -1066,7 +1109,9 @@ mod tests {
             &db_path,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
         ) {
-            if let Ok(Some(sp_dc)) = crate::auth::keyring_store::retrieve_credential("spotify", &conn) {
+            if let Ok(Some(sp_dc)) =
+                crate::auth::keyring_store::retrieve_credential("spotify", &conn)
+            {
                 let provider = SpotifyProvider::new(sp_dc);
                 println!("Calling provider.list_playlists()...");
                 let start = std::time::Instant::now();

@@ -9,6 +9,7 @@ import {
   FolderInput,
   Cpu,
 } from "lucide-react";
+import { defaultSettings, readSoundShiftSettings } from "../settings/SettingsPage";
 
 export interface TransferTargetOptions {
   playlistName: string;
@@ -39,7 +40,13 @@ export const TransferConfirmModal: React.FC<TransferConfirmModalProps> = ({
   const [isNewPlaylist, setIsNewPlaylist] = useState(true);
   const [customTitle, setCustomTitle] = useState(playlistTitle);
   const [targetPlaylistId, setTargetPlaylistId] = useState("");
-  const [concurrency, setConcurrency] = useState(4);
+  const [concurrency, setConcurrency] = useState(() => {
+    try {
+      return readSoundShiftSettings().concurrency;
+    } catch {
+      return defaultSettings.concurrency;
+    }
+  });
 
   if (!isOpen) return null;
 

@@ -8,4 +8,3 @@ pub use keyring_store::{
 };
 pub use sapisid::{generate_sapisid_hash, parse_spotify_cookie, parse_ytmusic_cookie};
 pub use webview_trap::open_auth_window;
-

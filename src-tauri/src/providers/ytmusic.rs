@@ -66,9 +66,18 @@ impl YouTubeMusicProvider {
             HeaderValue::from_str(&auth_val).map_err(|e| e.to_string())?,
         );
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        headers.insert("Origin", HeaderValue::from_static("https://music.youtube.com"));
-        headers.insert("Referer", HeaderValue::from_static("https://music.youtube.com/"));
-        headers.insert("X-Origin", HeaderValue::from_static("https://music.youtube.com"));
+        headers.insert(
+            "Origin",
+            HeaderValue::from_static("https://music.youtube.com"),
+        );
+        headers.insert(
+            "Referer",
+            HeaderValue::from_static("https://music.youtube.com/"),
+        );
+        headers.insert(
+            "X-Origin",
+            HeaderValue::from_static("https://music.youtube.com"),
+        );
         headers.insert("X-Goog-AuthUser", HeaderValue::from_static("0"));
 
         if let Ok(c) = HeaderValue::from_str(&self.cookie_str) {
@@ -120,14 +129,15 @@ impl YouTubeMusicProvider {
             .as_str()
             .or_else(|| renderer["navigationEndpoint"]["watchEndpoint"]["videoId"].as_str())
             .or_else(|| {
-                renderer["flexColumns"][0]["musicResponsiveListItemFlexColumnRenderer"]["text"]["runs"][0]["navigationEndpoint"]["watchEndpoint"]["videoId"].as_str()
+                renderer["flexColumns"][0]["musicResponsiveListItemFlexColumnRenderer"]["text"]
+                    ["runs"][0]["navigationEndpoint"]["watchEndpoint"]["videoId"]
+                    .as_str()
             })?
             .to_string();
 
         let flex_cols = renderer["flexColumns"].as_array()?;
-        let title = flex_cols
-            .first()?
-            ["musicResponsiveListItemFlexColumnRenderer"]["text"]["runs"][0]["text"]
+        let title = flex_cols.first()?["musicResponsiveListItemFlexColumnRenderer"]["text"]["runs"]
+            [0]["text"]
             .as_str()?
             .to_string();
 
@@ -136,7 +146,9 @@ impl YouTubeMusicProvider {
         let mut duration_ms = 0;
 
         if flex_cols.len() > 1 {
-            if let Some(runs) = flex_cols[1]["musicResponsiveListItemFlexColumnRenderer"]["text"]["runs"].as_array() {
+            if let Some(runs) =
+                flex_cols[1]["musicResponsiveListItemFlexColumnRenderer"]["text"]["runs"].as_array()
+            {
                 let mut artist_mode = true;
                 for run in runs {
                     let text = run["text"].as_str().unwrap_or("").trim();
@@ -160,7 +172,9 @@ impl YouTubeMusicProvider {
 
         if duration_ms == 0 {
             if let Some(fixed_cols) = renderer["fixedColumns"].as_array() {
-                if let Some(runs) = fixed_cols.first().and_then(|c| c["musicResponsiveListItemFixedColumnRenderer"]["text"]["runs"].as_array()) {
+                if let Some(runs) = fixed_cols.first().and_then(|c| {
+                    c["musicResponsiveListItemFixedColumnRenderer"]["text"]["runs"].as_array()
+                }) {
                     if let Some(dur_text) = runs.first().and_then(|r| r["text"].as_str()) {
                         duration_ms = Self::parse_duration_to_ms(dur_text);
                     }
@@ -180,7 +194,8 @@ impl YouTubeMusicProvider {
             .as_str()
             .is_some_and(|policy| policy.contains("GREY_OUT") || policy.contains("DISABLED"));
 
-        let thumbnail_url = renderer["thumbnail"]["musicThumbnailRenderer"]["thumbnail"]["thumbnails"]
+        let thumbnail_url = renderer["thumbnail"]["musicThumbnailRenderer"]["thumbnail"]
+            ["thumbnails"]
             .as_array()
             .and_then(|arr| arr.last())
             .and_then(|img| img["url"].as_str())
@@ -220,7 +235,10 @@ impl MusicProvider for YouTubeMusicProvider {
             .map_err(|e| format!("InnerTube browse playlists request failed: {}", e))?;
 
         if !res.status().is_success() {
-            return Err(format!("InnerTube browse failed with status: {}", res.status()));
+            return Err(format!(
+                "InnerTube browse failed with status: {}",
+                res.status()
+            ));
         }
 
         let json: Value = res
@@ -319,7 +337,10 @@ impl MusicProvider for YouTubeMusicProvider {
             .map_err(|e| format!("InnerTube get_playlist_tracks failed: {}", e))?;
 
         if !res.status().is_success() {
-            return Err(format!("InnerTube get tracks failed with status: {}", res.status()));
+            return Err(format!(
+                "InnerTube get tracks failed with status: {}",
+                res.status()
+            ));
         }
 
         let json: Value = res
@@ -524,7 +545,11 @@ impl MusicProvider for YouTubeMusicProvider {
         Ok(results)
     }
 
-    async fn create_playlist(&self, title: &str, description: Option<&str>) -> Result<String, String> {
+    async fn create_playlist(
+        &self,
+        title: &str,
+        description: Option<&str>,
+    ) -> Result<String, String> {
         let headers = self.build_headers()?;
         let body = json!({
             "context": Self::client_context(),
@@ -543,7 +568,10 @@ impl MusicProvider for YouTubeMusicProvider {
             .map_err(|e| format!("InnerTube playlist creation failed: {}", e))?;
 
         if !res.status().is_success() {
-            return Err(format!("Playlist creation failed with status: {}", res.status()));
+            return Err(format!(
+                "Playlist creation failed with status: {}",
+                res.status()
+            ));
         }
 
         let json: Value = res.json().await.map_err(|e| e.to_string())?;
@@ -628,7 +656,10 @@ impl MusicProvider for YouTubeMusicProvider {
             .map_err(|e| format!("InnerTube edit_playlist remove failed: {}", e))?;
 
         if !res.status().is_success() {
-            return Err(format!("Remove tracks failed with status: {}", res.status()));
+            return Err(format!(
+                "Remove tracks failed with status: {}",
+                res.status()
+            ));
         }
 
         Ok(())
@@ -653,7 +684,10 @@ impl MusicProvider for YouTubeMusicProvider {
             .map_err(|e| format!("InnerTube playlist/delete failed: {}", e))?;
 
         if !res.status().is_success() {
-            return Err(format!("Delete playlist failed with status: {}", res.status()));
+            return Err(format!(
+                "Delete playlist failed with status: {}",
+                res.status()
+            ));
         }
 
         Ok(())
@@ -668,7 +702,10 @@ mod tests {
     fn test_parse_duration_to_ms() {
         assert_eq!(YouTubeMusicProvider::parse_duration_to_ms("3:45"), 225_000);
         assert_eq!(YouTubeMusicProvider::parse_duration_to_ms("0:30"), 30_000);
-        assert_eq!(YouTubeMusicProvider::parse_duration_to_ms("1:02:15"), 3_735_000);
+        assert_eq!(
+            YouTubeMusicProvider::parse_duration_to_ms("1:02:15"),
+            3_735_000
+        );
         assert_eq!(YouTubeMusicProvider::parse_duration_to_ms("45"), 45_000);
     }
 
@@ -681,11 +718,16 @@ mod tests {
             &db_path,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
         ) {
-            if let Ok(Some(token)) = crate::auth::keyring_store::retrieve_credential("ytmusic", &conn) {
+            if let Ok(Some(token)) =
+                crate::auth::keyring_store::retrieve_credential("ytmusic", &conn)
+            {
                 println!("FOUND YTMUSIC TOKEN (len={})", token.len());
                 let provider = YouTubeMusicProvider::new(token);
 
-                let playlists = provider.list_playlists().await.expect("Failed to list playlists");
+                let playlists = provider
+                    .list_playlists()
+                    .await
+                    .expect("Failed to list playlists");
                 println!("FOUND {} PLAYLISTS", playlists.len());
                 assert!(!playlists.is_empty(), "Expected at least 1 playlist");
             } else {

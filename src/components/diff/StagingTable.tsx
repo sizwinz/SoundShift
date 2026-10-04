@@ -99,7 +99,12 @@ export const StagingTable: React.FC<StagingTableProps> = ({
   const handleAcceptAllAmbiguous = () => {
     const nextSelection = new Set(selectedTrackIds);
     const updated = results.map((r) => {
-      if (r.status === "Ambiguous" && r.candidates.length > 0) {
+      if (
+        r.status === "Ambiguous" &&
+        r.candidates.length > 0 &&
+        r.candidates[0].similarity >= 0.85 &&
+        r.candidates[0].duration_delta_ms <= 4_000
+      ) {
         const top = r.candidates[0];
         nextSelection.add(r.source_track.id);
         return {
@@ -228,11 +233,12 @@ export const StagingTable: React.FC<StagingTableProps> = ({
     });
   }, [results, activeTab, searchQuery, duplicateIdSet]);
 
-  // Virtualizer configuration: fixed 56px row height per D-04
+  // Keep row sizing deterministic so large playlists remain smooth while allowing
+  // the row content to breathe on narrow windows.
   const rowVirtualizer = useVirtualizer({
     count: filteredResults.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 56,
+    estimateSize: () => 76,
     overscan: 10,
   });
 
@@ -262,7 +268,7 @@ export const StagingTable: React.FC<StagingTableProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#000000] border border-[#27272a] rounded-lg overflow-hidden shadow-2xl">
+    <div className="flex h-[calc(100dvh-9.5rem)] min-h-[520px] flex-col overflow-hidden rounded-xl border border-[#27272a] bg-[#050507] shadow-2xl">
       {/* Header bar */}
       <div className="flex items-center justify-between px-4 py-3 bg-[#09090b] border-b border-[#27272a]">
         <div className="flex items-center gap-3">
@@ -314,7 +320,7 @@ export const StagingTable: React.FC<StagingTableProps> = ({
       {/* Virtualized List Container */}
       <div
         ref={parentRef}
-        className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent relative min-h-[400px] max-h-[calc(100vh-280px)]"
+        className="relative min-h-0 flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent"
       >
         {filteredResults.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-48 text-zinc-500">

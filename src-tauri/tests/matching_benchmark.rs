@@ -205,15 +205,60 @@ async fn test_headless_matching_benchmark() {
     println!("\n==================================================================");
     println!("             SOUNDSHIFT MATCHING BENCHMARK REPORT                 ");
     println!("==================================================================");
-    println!("{:<25} | {:<8} | {:<8} | {:<10}", "Category", "Total", "Passed", "Accuracy");
+    println!(
+        "{:<25} | {:<8} | {:<8} | {:<10}",
+        "Category", "Total", "Passed", "Accuracy"
+    );
     println!("------------------------------------------------------------------");
-    println!("{:<25} | {:<8} | {:<8} | {:.2}%", "Studio Recordings", total_studio, correct_studio, studio_accuracy * 100.0);
-    println!("{:<25} | {:<8} | {:<8} | {:.2}%", "Remaster / Deluxe Editions", total_remaster, correct_remaster, remaster_accuracy * 100.0);
-    println!("{:<25} | {:<8} | {:<8} | {:.2}%", "Featured Artists In Title", total_feat, correct_feat, feat_accuracy * 100.0);
-    println!("{:<25} | {:<8} | {:<8} | {:.2}%", "Diacritics & International", total_diacritics, correct_diacritics, diacritic_accuracy * 100.0);
-    println!("{:<25} | {:<8} | {:<8} | {:.2}%", "Inverted / Transposed Words", total_inverted, correct_inverted, inverted_accuracy * 100.0);
-    println!("{:<25} | {:<8} | {:<8} | {:.2}%", "Delta > 15s Rejections", total_negative, rejected_negative, negative_rejection_rate * 100.0);
-    println!("{:<25} | {:<8} | {:<8} | {:.2}%", "4s < Delta <= 15s Ambiguous", total_ambiguous, correct_ambiguous, ambiguous_accuracy * 100.0);
+    println!(
+        "{:<25} | {:<8} | {:<8} | {:.2}%",
+        "Studio Recordings",
+        total_studio,
+        correct_studio,
+        studio_accuracy * 100.0
+    );
+    println!(
+        "{:<25} | {:<8} | {:<8} | {:.2}%",
+        "Remaster / Deluxe Editions",
+        total_remaster,
+        correct_remaster,
+        remaster_accuracy * 100.0
+    );
+    println!(
+        "{:<25} | {:<8} | {:<8} | {:.2}%",
+        "Featured Artists In Title",
+        total_feat,
+        correct_feat,
+        feat_accuracy * 100.0
+    );
+    println!(
+        "{:<25} | {:<8} | {:<8} | {:.2}%",
+        "Diacritics & International",
+        total_diacritics,
+        correct_diacritics,
+        diacritic_accuracy * 100.0
+    );
+    println!(
+        "{:<25} | {:<8} | {:<8} | {:.2}%",
+        "Inverted / Transposed Words",
+        total_inverted,
+        correct_inverted,
+        inverted_accuracy * 100.0
+    );
+    println!(
+        "{:<25} | {:<8} | {:<8} | {:.2}%",
+        "Delta > 15s Rejections",
+        total_negative,
+        rejected_negative,
+        negative_rejection_rate * 100.0
+    );
+    println!(
+        "{:<25} | {:<8} | {:<8} | {:.2}%",
+        "4s < Delta <= 15s Ambiguous",
+        total_ambiguous,
+        correct_ambiguous,
+        ambiguous_accuracy * 100.0
+    );
     println!("==================================================================");
     println!("Total Fixtures Evaluated: {}", total_tracks);
     println!("==================================================================\n");

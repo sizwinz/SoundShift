@@ -16,6 +16,7 @@ import {
   Globe,
   Loader2,
 } from "lucide-react";
+import { ProviderLogo } from "../providers/ProviderLogo";
 
 interface PlaylistSelectorProps {
   onMatchComplete: (
@@ -173,7 +174,7 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
   };
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-6 pb-28">
       {/* Route & Direction Bar */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Source Provider Card */}
@@ -212,7 +213,7 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
                   : "bg-zinc-900/50 text-zinc-400 border-zinc-800 hover:bg-zinc-800/60"
               }`}
             >
-              <span className="w-2 h-2 rounded-full bg-[#1DB954]" />
+              <ProviderLogo provider="spotify" size="sm" />
               Spotify
             </button>
 
@@ -226,7 +227,7 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
                   : "bg-zinc-900/50 text-zinc-400 border-zinc-800 hover:bg-zinc-800/60"
               }`}
             >
-              <span className="w-2 h-2 rounded-full bg-[#FF0000]" />
+              <ProviderLogo provider="ytmusic" size="sm" />
               YouTube Music
             </button>
           </div>
@@ -259,10 +260,9 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
 
           <div className="flex items-center justify-between p-2.5 rounded border bg-zinc-900/50 border-zinc-800 text-xs">
             <div className="flex items-center gap-2 font-medium text-zinc-200 capitalize">
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  targetService === "spotify" ? "bg-[#1DB954]" : "bg-[#FF0000]"
-                }`}
+              <ProviderLogo
+                provider={targetService === "spotify" ? "spotify" : "ytmusic"}
+                size="sm"
               />
               {targetService === "spotify" ? "Spotify" : "YouTube Music"}
             </div>
@@ -284,24 +284,26 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
 
       {/* Active Processing Modal / Progress Banner */}
       {isProcessing && (
-        <div className="bg-[#09090b] border border-emerald-500/40 rounded-lg p-5 shadow-2xl">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
-              <span className="text-xs font-semibold text-zinc-200">
-                {progressStage === "ingesting" ? "Extracting Track Metadata" : "Executing Matching Engine"}
-              </span>
+        <div className="fixed inset-x-0 bottom-[4.5rem] z-30 px-3 sm:px-5 lg:left-[200px] lg:px-8">
+          <div className="mx-auto max-w-[1440px] rounded-t-lg border border-emerald-500/40 border-b-0 bg-[#09090b]/[.98] p-3 shadow-[0_-10px_28px_rgba(0,0,0,.28)] backdrop-blur-xl">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
+                <span className="text-xs font-semibold text-zinc-200">
+                  {progressStage === "ingesting" ? "Extracting Track Metadata" : "Executing Matching Engine"}
+                </span>
+              </div>
+              <span className="text-xs font-mono text-emerald-400">{progressPercent}%</span>
             </div>
-            <span className="text-xs font-mono text-emerald-400">{progressPercent}%</span>
-          </div>
 
-          <p className="text-xs text-zinc-400 mb-3">{progressMessage}</p>
+            <p className="text-xs text-zinc-400 mb-3">{progressMessage}</p>
 
-          <div className="w-full bg-zinc-900 h-2 rounded-full overflow-hidden border border-zinc-800">
-            <div
-              className="bg-emerald-500 h-full transition-all duration-300 ease-out"
-              style={{ width: `${progressPercent}%` }}
-            />
+            <div className="w-full bg-zinc-900 h-2 rounded-full overflow-hidden border border-zinc-800">
+              <div
+                className="bg-emerald-500 h-full transition-all duration-300 ease-out"
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
           </div>
         </div>
       )}
@@ -420,28 +422,30 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
 
       {/* Action Footer */}
       {isSourceConnected && (
-        <div className="flex items-center justify-between p-4 bg-[#09090b] border border-[#27272a] rounded-lg mt-2">
-          <div className="text-xs text-zinc-400">
-            {selectedPlaylist ? (
-              <span>
-                Selected: <strong className="text-zinc-200">{selectedPlaylist.title}</strong> (
-                {selectedPlaylist.track_count} tracks)
-              </span>
-            ) : (
-              <span>Select a playlist to proceed</span>
-            )}
-          </div>
+        <div className="fixed inset-x-0 bottom-0 z-40 h-[4.5rem] border-t border-emerald-500/20 bg-[#09090b]/[.99] px-3 py-2 shadow-[0_-18px_40px_rgba(0,0,0,.46)] backdrop-blur-xl sm:px-5 lg:left-[200px] lg:px-8">
+          <div className="mx-auto flex h-full max-w-[1440px] items-center justify-between gap-3 rounded-b-lg border border-[#27272a] bg-[#0d0d10] px-3 py-2">
+            <div className="min-w-0 text-xs text-zinc-400">
+              {selectedPlaylist ? (
+                <span className="block truncate">
+                  Selected: <strong className="text-zinc-200">{selectedPlaylist.title}</strong> ({selectedPlaylist.track_count} tracks)
+                </span>
+              ) : (
+                <span>Select a playlist to proceed</span>
+              )}
+            </div>
 
-          <button
-            type="button"
-            onClick={handleStartMatching}
-            disabled={!selectedPlaylist || isProcessing || !isTargetConnected}
-            className="flex items-center gap-2 px-5 py-2 rounded bg-emerald-500 hover:bg-emerald-400 text-black font-semibold text-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
-          >
-            <Play className="w-3.5 h-3.5 fill-black" />
-            <span>Analyze & Match Playlist</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </button>
+            <button
+              type="button"
+              onClick={handleStartMatching}
+              disabled={!selectedPlaylist || isProcessing || !isTargetConnected}
+              className="inline-flex h-10 shrink-0 items-center gap-2 rounded-md bg-emerald-500 px-4 text-xs font-semibold text-black shadow-md transition hover:-translate-y-px hover:bg-emerald-400 active:translate-y-0 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Play className="w-3.5 h-3.5 fill-black" />
+              <span className="hidden sm:inline">Analyze & Match Playlist</span>
+              <span className="sm:hidden">Analyze</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       )}
     </div>

@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Radio,
 } from "lucide-react";
+import { ProviderLogo } from "../providers/ProviderLogo";
 
 export type NavTab = "playlists" | "transfers" | "history" | "accounts" | "settings";
 
@@ -50,16 +51,8 @@ export function Sidebar({
     { id: "settings" as NavTab, label: "Settings", icon: Settings },
   ];
 
-  const getStatusColor = (status: "connected" | "expired" | "disconnected") => {
-    switch (status) {
-      case "connected":
-        return "bg-emerald-500";
-      case "expired":
-        return "bg-amber-500";
-      case "disconnected":
-      default:
-        return "bg-zinc-600";
-    }
+  const getProviderStateClass = (status: "connected" | "expired" | "disconnected") => {
+    return status === "connected" ? "" : "grayscale opacity-60";
   };
 
   return (
@@ -124,31 +117,27 @@ export function Sidebar({
             </div>
             <div className="flex items-center justify-between text-xs text-zinc-300">
               <span className="truncate">YouTube Music</span>
-              <span
-                className={`w-2 h-2 rounded-full ${getStatusColor(ytStatus)}`}
-                title={`YouTube Music: ${ytStatus}`}
-              />
+              <span title={`YouTube Music: ${ytStatus}`}>
+                <ProviderLogo provider="ytmusic" size="sm" className={getProviderStateClass(ytStatus)} />
+              </span>
             </div>
             <div className="flex items-center justify-between text-xs text-zinc-300">
               <span className="truncate">Spotify</span>
-              <span
-                className={`w-2 h-2 rounded-full ${getStatusColor(spotifyStatus)}`}
-                title={`Spotify: ${spotifyStatus}`}
-              />
+              <span title={`Spotify: ${spotifyStatus}`}>
+                <ProviderLogo provider="spotify" size="sm" className={getProviderStateClass(spotifyStatus)} />
+              </span>
             </div>
           </div>
         ) : (
           <div className="flex flex-col items-center gap-2">
             <Radio className="w-3.5 h-3.5 text-zinc-500" />
             <div className="flex flex-col gap-1.5 items-center">
-              <span
-                className={`w-2 h-2 rounded-full ${getStatusColor(ytStatus)}`}
-                title={`YouTube Music: ${ytStatus}`}
-              />
-              <span
-                className={`w-2 h-2 rounded-full ${getStatusColor(spotifyStatus)}`}
-                title={`Spotify: ${spotifyStatus}`}
-              />
+              <span title={`YouTube Music: ${ytStatus}`}>
+                <ProviderLogo provider="ytmusic" size="sm" />
+              </span>
+              <span title={`Spotify: ${spotifyStatus}`}>
+                <ProviderLogo provider="spotify" size="sm" />
+              </span>
             </div>
           </div>
         )}

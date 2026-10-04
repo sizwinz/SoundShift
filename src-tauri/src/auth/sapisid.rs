@@ -147,7 +147,10 @@ mod tests {
         ];
 
         let token = parse_ytmusic_cookie(&cookies);
-        assert_eq!(token, Some("HSID=hsid123; SAPISID=sapisid_secret_456".into()));
+        assert_eq!(
+            token,
+            Some("HSID=hsid123; SAPISID=sapisid_secret_456".into())
+        );
 
         // Reject if SAPISID is present but no session cookie
         let unauthenticated = vec![RawCookie {

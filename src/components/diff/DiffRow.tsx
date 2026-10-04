@@ -82,12 +82,12 @@ export const DiffRow: React.FC<DiffRowProps> = ({
 
   return (
     <div
-      className={`h-[56px] flex items-center px-4 border-b border-[#18181b] select-none transition-colors ${
+      className={`h-[76px] flex items-center gap-2 px-3 sm:px-4 border-b border-[#18181b] select-none transition-colors ${
         isSelected ? "bg-[#121215]" : "hover:bg-[#0c0c0e]"
       }`}
     >
       {/* Checkbox */}
-      <div className="flex items-center mr-3">
+      <div className="flex items-center mr-1 sm:mr-2">
         <input
           type="checkbox"
           checked={isSelected}
@@ -97,12 +97,12 @@ export const DiffRow: React.FC<DiffRowProps> = ({
       </div>
 
       {/* Source Track Column */}
-      <div className="flex items-center min-w-0 flex-1 gap-3">
+      <div className="flex items-center min-w-0 flex-1 gap-2 sm:gap-3">
         {source_track.thumbnail_url ? (
           <img
             src={source_track.thumbnail_url}
             alt=""
-            className="w-9 h-9 rounded object-cover flex-shrink-0 bg-zinc-900"
+            className="w-8 h-8 sm:w-9 sm:h-9 rounded object-cover flex-shrink-0 bg-zinc-900"
             loading="lazy"
           />
         ) : (
@@ -128,7 +128,7 @@ export const DiffRow: React.FC<DiffRowProps> = ({
               </span>
             )}
           </div>
-          <div className="text-[11px] text-zinc-500 truncate">
+          <div className="text-[10px] sm:text-[11px] text-zinc-500 truncate">
             {source_track.artists.join(", ")}
             <span className="mx-1 text-zinc-700">-</span>
             <span>{formatDuration(source_track.duration_ms)}</span>
@@ -137,13 +137,13 @@ export const DiffRow: React.FC<DiffRowProps> = ({
       </div>
 
       {/* Visual Match Arrow & Status Pill */}
-      <div className="flex items-center justify-center px-4 flex-shrink-0 gap-2">
-        <ArrowRight className="w-3.5 h-3.5 text-zinc-600" />
+      <div className="flex items-center justify-center px-1 sm:px-4 flex-shrink-0 gap-1.5 sm:gap-2">
+        <ArrowRight className="w-3.5 h-3.5 text-zinc-600 hidden sm:block" />
         {renderStatusBadge()}
       </div>
 
       {/* Destination Matched Track Column */}
-      <div className="flex items-center min-w-0 flex-1 gap-3 justify-end text-right">
+      <div className="flex items-center min-w-0 flex-1 gap-2 sm:gap-3 justify-end text-right">
         <div className="min-w-0 flex-1">
           {matched_track ? (
             <>
@@ -172,7 +172,7 @@ export const DiffRow: React.FC<DiffRowProps> = ({
           <img
             src={matched_track.thumbnail_url}
             alt=""
-            className="w-9 h-9 rounded object-cover flex-shrink-0 bg-zinc-900"
+            className="w-8 h-8 sm:w-9 sm:h-9 rounded object-cover flex-shrink-0 bg-zinc-900"
             loading="lazy"
           />
         ) : (

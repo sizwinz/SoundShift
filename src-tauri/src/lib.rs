@@ -4,10 +4,10 @@ pub mod models;
 pub mod providers;
 pub mod storage;
 
+use crate::engine::worker::TransferControl;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
-use crate::engine::worker::TransferControl;
 
 pub struct AppState {
     pub db: Arc<Mutex<rusqlite::Connection>>,
@@ -22,6 +22,7 @@ pub fn run() {
             auth::keyring_store::check_auth,
             auth::keyring_store::disconnect_account,
             providers::commands::list_provider_playlists,
+            providers::commands::check_provider_connection,
             providers::commands::fetch_playlist_tracks,
             providers::commands::search_provider_tracks,
             providers::commands::resolve_track_by_url,
@@ -35,7 +36,10 @@ pub fn run() {
             engine::commands::get_transfer_history
         ])
         .setup(|app| {
-            let app_dir = app.path().app_data_dir().expect("failed to get app data dir");
+            let app_dir = app
+                .path()
+                .app_data_dir()
+                .expect("failed to get app data dir");
             let conn = storage::init_db(&app_dir).expect("failed to initialize sqlite database");
             app.manage(AppState {
                 db: Arc::new(Mutex::new(conn)),

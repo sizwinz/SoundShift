@@ -1,7 +1,9 @@
 use crate::engine::matcher::{match_track, MatchResult};
 use crate::engine::rate_limiter::SearchRateLimiter;
 use crate::engine::snapshot::{AuditResult, TransferHistoryEntry};
-use crate::engine::worker::{BatchTransferConfig, BatchTransferSummary, TransferControl, TransferWorkerPool};
+use crate::engine::worker::{
+    BatchTransferConfig, BatchTransferSummary, TransferControl, TransferWorkerPool,
+};
 use crate::models::SourceTrack;
 use crate::providers::spotify::SpotifyProvider;
 use crate::providers::traits::MusicProvider;
@@ -108,14 +110,25 @@ pub async fn start_batch_transfer(
     // Resolve target provider credentials
     let target_token = {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
-        crate::auth::keyring_store::retrieve_credential(&config.target_service, &conn)?
-            .ok_or_else(|| format!("Target service '{}' is not authenticated", config.target_service))?
+        crate::auth::keyring_store::retrieve_credential(&config.target_service, &conn)?.ok_or_else(
+            || {
+                format!(
+                    "Target service '{}' is not authenticated",
+                    config.target_service
+                )
+            },
+        )?
     };
 
     let target_provider: Arc<Box<dyn MusicProvider>> = match config.target_service.as_str() {
         "spotify" => Arc::new(Box::new(SpotifyProvider::new(target_token))),
         "ytmusic" => Arc::new(Box::new(YouTubeMusicProvider::new(target_token))),
-        _ => return Err(format!("Unsupported target service: {}", config.target_service)),
+        _ => {
+            return Err(format!(
+                "Unsupported target service: {}",
+                config.target_service
+            ))
+        }
     };
 
     let control = TransferControl::new();
@@ -138,10 +151,7 @@ pub async fn start_batch_transfer(
 
 /// Pauses an in-flight batch migration.
 #[tauri::command]
-pub async fn pause_batch_transfer(
-    app: tauri::AppHandle,
-    job_id: String,
-) -> Result<(), String> {
+pub async fn pause_batch_transfer(app: tauri::AppHandle, job_id: String) -> Result<(), String> {
     let state = app.state::<AppState>();
     let transfers = state.active_transfers.lock().map_err(|e| e.to_string())?;
     if let Some(ctrl) = transfers.get(&job_id) {
@@ -154,10 +164,7 @@ pub async fn pause_batch_transfer(
 
 /// Resumes a paused batch migration.
 #[tauri::command]
-pub async fn resume_batch_transfer(
-    app: tauri::AppHandle,
-    job_id: String,
-) -> Result<(), String> {
+pub async fn resume_batch_transfer(app: tauri::AppHandle, job_id: String) -> Result<(), String> {
     let state = app.state::<AppState>();
     let transfers = state.active_transfers.lock().map_err(|e| e.to_string())?;
     if let Some(ctrl) = transfers.get(&job_id) {
@@ -170,10 +177,7 @@ pub async fn resume_batch_transfer(
 
 /// Cancels an in-flight batch migration.
 #[tauri::command]
-pub async fn cancel_batch_transfer(
-    app: tauri::AppHandle,
-    job_id: String,
-) -> Result<(), String> {
+pub async fn cancel_batch_transfer(app: tauri::AppHandle, job_id: String) -> Result<(), String> {
     let state = app.state::<AppState>();
     let transfers = state.active_transfers.lock().map_err(|e| e.to_string())?;
     if let Some(ctrl) = transfers.get(&job_id) {
@@ -205,8 +209,14 @@ pub async fn execute_snapshot_rollback(
         let payload: crate::engine::snapshot::SnapshotPayload = serde_json::from_str(&payload_str)
             .map_err(|e| format!("Failed to parse snapshot: {}", e))?;
 
-        let token = crate::auth::keyring_store::retrieve_credential(&payload.target_service, &conn)?
-            .ok_or_else(|| format!("Target service '{}' is not authenticated", payload.target_service))?;
+        let token =
+            crate::auth::keyring_store::retrieve_credential(&payload.target_service, &conn)?
+                .ok_or_else(|| {
+                    format!(
+                        "Target service '{}' is not authenticated",
+                        payload.target_service
+                    )
+                })?;
 
         (payload.target_service, token)
     };

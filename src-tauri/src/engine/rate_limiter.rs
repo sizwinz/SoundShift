@@ -17,7 +17,11 @@ impl SearchRateLimiter {
         Self {
             semaphore: Arc::new(Semaphore::new(max_concurrency)),
             dispatch_interval: Duration::from_millis(dispatch_interval_ms),
-            last_dispatch: Arc::new(Mutex::new(Instant::now().checked_sub(Duration::from_secs(10)).unwrap_or_else(Instant::now))),
+            last_dispatch: Arc::new(Mutex::new(
+                Instant::now()
+                    .checked_sub(Duration::from_secs(10))
+                    .unwrap_or_else(Instant::now),
+            )),
         }
     }
 

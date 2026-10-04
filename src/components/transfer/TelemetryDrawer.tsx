@@ -28,6 +28,7 @@ export const TelemetryDrawer: React.FC<TelemetryDrawerProps> = ({
     logs,
     auditResult,
     summary,
+    error,
     trackEvents,
     isDrawerOpen,
     isDrawerExpanded,
@@ -72,7 +73,7 @@ export const TelemetryDrawer: React.FC<TelemetryDrawerProps> = ({
   return (
     <aside
       className={`fixed bottom-0 left-0 right-0 z-40 bg-[#09090b] border-t border-[#27272a] shadow-2xl transition-all duration-300 flex flex-col ${
-        isDrawerExpanded ? "h-96" : "h-14"
+        isDrawerExpanded ? "h-[min(28rem,70dvh)]" : "h-14"
       }`}
       aria-label="Migration Telemetry Drawer"
     >
@@ -127,6 +128,8 @@ export const TelemetryDrawer: React.FC<TelemetryDrawerProps> = ({
               <span className="text-emerald-400 font-medium">Migration successfully completed</span>
             ) : isCancelled ? (
               <span className="text-amber-400">Migration stopped by user</span>
+            ) : isFailed ? (
+              <span className="text-rose-300 truncate">{error || "Transfer failed. Expand for details."}</span>
             ) : (
               <span>Preparing transfer manifest...</span>
             )}
@@ -199,6 +202,12 @@ export const TelemetryDrawer: React.FC<TelemetryDrawerProps> = ({
       {/* Expanded Console View */}
       {isDrawerExpanded && (
         <div className="flex-1 flex flex-col min-h-0 bg-[#09090b]">
+          {isFailed && error && (
+            <div className="mx-4 mt-3 rounded-lg border border-rose-500/30 bg-rose-950/30 px-3 py-2 text-sm text-rose-200">
+              <div className="font-semibold">Transfer failed</div>
+              <div className="mt-1 break-words text-rose-300/90">{error}</div>
+            </div>
+          )}
           {/* Subheader / Tabs Bar */}
           <div className="px-4 py-2 flex items-center justify-between border-b border-[#27272a] bg-[#09090b]">
             <div className="flex items-center gap-2">

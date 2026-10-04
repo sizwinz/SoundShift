@@ -213,7 +213,14 @@ export function TransferProvider({ children }: { children: ReactNode }) {
     if (!activeConfig || !summary || summary.failed_tracks === 0) return;
     // Identify tracks that were not successfully transferred
     // For non-blocking retry per D-05, slice remaining or failed tracks
-    const failedTracks = activeConfig.tracks.slice(summary.successful_tracks);
+    const failedTrackNames = new Set(
+      trackEvents
+        .filter((event) => event.status >= 400)
+        .map((event) => event.track)
+    );
+    const failedTracks = activeConfig.tracks.filter((track) =>
+      failedTrackNames.has(track.title)
+    );
     if (failedTracks.length === 0) return;
 
     const retryConfig: BatchTransferConfig = {
@@ -225,7 +232,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
     };
 
     await startTransfer(retryConfig);
-  }, [activeConfig, summary, startTransfer]);
+  }, [activeConfig, summary, trackEvents, startTransfer]);
 
   const toggleDrawerExpanded = useCallback(() => {
     setIsDrawerExpanded((prev) => !prev);

@@ -7,6 +7,7 @@ import { StagingTable } from "./components/diff/StagingTable";
 import { TransferTargetOptions } from "./components/diff/TransferConfirmModal";
 import { TelemetryDrawer } from "./components/transfer/TelemetryDrawer";
 import { TransferHistory } from "./components/history/TransferHistory";
+import { SettingsPage } from "./components/settings/SettingsPage";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { AudioProvider } from "./context/AudioContext";
 import { TransferProvider, useTransfer } from "./context/TransferContext";
@@ -43,8 +44,9 @@ function MainContent() {
     options: TransferTargetOptions
   ) => {
     const tracksToTransfer = selectedTracks
-      .map((r) => r.matched_track || r.source_track)
-      .filter(Boolean);
+      .filter((r) => r.status === "Exact" && r.matched_track)
+      .map((r) => r.matched_track!)
+      .filter((track) => track.is_playable !== false);
 
     startTransfer({
       job_id: `job_${Date.now()}`,
@@ -60,7 +62,7 @@ function MainContent() {
   };
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-[#000000] text-zinc-100 overflow-hidden font-sans relative">
+    <div className="flex flex-col min-h-[100dvh] h-screen w-screen bg-[#000000] text-zinc-100 overflow-hidden font-sans relative">
       {/* Custom Frameless Titlebar */}
       <Titlebar />
 
@@ -75,8 +77,8 @@ function MainContent() {
         />
 
         {/* Content Viewport */}
-        <main className="flex-1 overflow-y-auto bg-[#000000] p-6 pb-20">
-          <div className="max-w-5xl mx-auto">
+        <main className="flex-1 min-w-0 overflow-y-auto bg-[#000000] px-3 py-4 pb-24 sm:px-5 lg:px-8">
+          <div className="w-full max-w-[1440px] mx-auto">
             {activeTab === "accounts" && <AccountManager />}
 
             {activeTab === "playlists" && (
@@ -139,12 +141,7 @@ function MainContent() {
             )}
 
             {activeTab === "settings" && (
-              <div className="border border-[#27272a] rounded-lg bg-[#09090b] p-6 text-zinc-300">
-                <div className="text-sm font-medium mb-2">Application Settings</div>
-                <p className="text-xs text-zinc-500 leading-relaxed">
-                  Local-first configuration, concurrency settings, and snapshot rollback will be configured in Phase 4.
-                </p>
-              </div>
+              <SettingsPage />
             )}
           </div>
         </main>
