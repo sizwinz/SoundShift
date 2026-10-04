@@ -223,3 +223,115 @@ describe("Destination Playlist ID / URL Parsing", () => {
   });
 });
 
+describe("Destination Playlist Deduplication Logic", () => {
+  interface MinimalTrack {
+    id: string;
+    title: string;
+    artists: string[];
+    isrc?: string;
+  }
+
+  function filterDestinationDuplicates(
+    incoming: MinimalTrack[],
+    existing: MinimalTrack[]
+  ) {
+    const existingIds = new Set(existing.map((t) => t.id.replace("spotify:track:", "")));
+    const existingIsrcs = new Set(
+      existing.filter((t) => t.isrc).map((t) => t.isrc!.trim().toLowerCase())
+    );
+    const existingTitleArtists = new Set(
+      existing.map((t) => `${t.title.trim().toLowerCase()}::${(t.artists[0] || "").trim().toLowerCase()}`)
+    );
+
+    const toTransfer: MinimalTrack[] = [];
+    const skipped: MinimalTrack[] = [];
+
+    for (const track of incoming) {
+      const cleanId = track.id.replace("spotify:track:", "");
+      const isrc = track.isrc?.trim().toLowerCase();
+      const titleArtist = `${track.title.trim().toLowerCase()}::${(track.artists[0] || "").trim().toLowerCase()}`;
+
+      const isDuplicate =
+        existingIds.has(cleanId) ||
+        (isrc && existingIsrcs.has(isrc)) ||
+        existingTitleArtists.has(titleArtist);
+
+      if (isDuplicate) {
+        skipped.push(track);
+      } else {
+        toTransfer.push(track);
+        existingIds.add(cleanId);
+      }
+    }
+
+    return {
+      toTransfer,
+      skipped,
+      skippedCount: skipped.length,
+    };
+  }
+
+  it("filters tracks that match destination track IDs", () => {
+    const existing: MinimalTrack[] = [
+      { id: "trk_1", title: "Song One", artists: ["Artist A"] },
+      { id: "trk_2", title: "Song Two", artists: ["Artist B"] },
+    ];
+    const incoming: MinimalTrack[] = [
+      { id: "trk_1", title: "Song One", artists: ["Artist A"] },
+      { id: "trk_3", title: "Song Three", artists: ["Artist C"] },
+    ];
+
+    const result = filterDestinationDuplicates(incoming, existing);
+
+    expect(result.skippedCount).toBe(1);
+    expect(result.toTransfer).toHaveLength(1);
+    expect(result.toTransfer[0].id).toBe("trk_3");
+    expect(result.skipped[0].id).toBe("trk_1");
+  });
+
+  it("filters tracks that match destination ISRC codes", () => {
+    const existing: MinimalTrack[] = [
+      { id: "trk_1", title: "Original Title", artists: ["Artist A"], isrc: "USUM71703861" },
+    ];
+    const incoming: MinimalTrack[] = [
+      { id: "trk_diff_id", title: "Alternative Title", artists: ["Artist A"], isrc: "usum71703861" },
+    ];
+
+    const result = filterDestinationDuplicates(incoming, existing);
+
+    expect(result.skippedCount).toBe(1);
+    expect(result.toTransfer).toHaveLength(0);
+  });
+
+  it("filters tracks matching title and artist when IDs differ", () => {
+    const existing: MinimalTrack[] = [
+      { id: "spotify_1", title: "Ordinary Person", artists: ["Anirudh Ravichander"] },
+    ];
+    const incoming: MinimalTrack[] = [
+      { id: "yt_1", title: "ordinary person", artists: ["Anirudh Ravichander"] },
+    ];
+
+    const result = filterDestinationDuplicates(incoming, existing);
+
+    expect(result.skippedCount).toBe(1);
+    expect(result.toTransfer).toHaveLength(0);
+  });
+
+  it("returns zero mutations and records skipped count when all tracks already exist", () => {
+    const existing: MinimalTrack[] = [
+      { id: "1", title: "Song 1", artists: ["Artist 1"] },
+      { id: "2", title: "Song 2", artists: ["Artist 2"] },
+    ];
+    const incoming: MinimalTrack[] = [
+      { id: "1", title: "Song 1", artists: ["Artist 1"] },
+      { id: "2", title: "Song 2", artists: ["Artist 2"] },
+    ];
+
+    const result = filterDestinationDuplicates(incoming, existing);
+
+    expect(result.toTransfer).toHaveLength(0);
+    expect(result.skippedCount).toBe(2);
+  });
+});
+
+

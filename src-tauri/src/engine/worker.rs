@@ -24,6 +24,8 @@ pub struct BatchTransferConfig {
     pub is_new_playlist: bool,
     pub tracks: Vec<SourceTrack>,
     pub concurrency: usize,
+    #[serde(default)]
+    pub skip_duplicates: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,6 +59,8 @@ pub struct BatchTransferSummary {
     pub total_tracks: usize,
     pub successful_tracks: usize,
     pub failed_tracks: usize,
+    #[serde(default)]
+    pub skipped_duplicates: usize,
     pub is_cancelled: bool,
     pub audit: Option<AuditResult>,
 }
@@ -104,6 +108,91 @@ pub fn resolve_concurrency(target_service: &str, requested_concurrency: usize) -
     } else {
         requested_concurrency.clamp(1, 8)
     }
+}
+
+fn strip_parentheticals(s: &str) -> String {
+    let mut result = String::new();
+    let mut in_paren = 0;
+    for c in s.chars() {
+        match c {
+            '(' | '[' => in_paren += 1,
+            ')' | ']' => {
+                if in_paren > 0 {
+                    in_paren -= 1;
+                }
+            }
+            _ if in_paren == 0 => result.push(c),
+            _ => {}
+        }
+    }
+    result.trim().to_string()
+}
+
+pub fn is_duplicate_track(track: &SourceTrack, existing_tracks: &[SourceTrack]) -> bool {
+    let clean_id = track.id.trim().trim_start_matches("spotify:track:");
+
+    for existing in existing_tracks {
+        let existing_clean_id = existing.id.trim().trim_start_matches("spotify:track:");
+        // 1. Exact ID equality
+        if !clean_id.is_empty() && clean_id == existing_clean_id {
+            return true;
+        }
+
+        // 2. ISRC match (if both provide valid ISRCs)
+        if let (Some(ref isrc_a), Some(ref isrc_b)) = (&track.isrc, &existing.isrc) {
+            let clean_a = isrc_a.trim();
+            let clean_b = isrc_b.trim();
+            if !clean_a.is_empty() && !clean_b.is_empty() && clean_a.eq_ignore_ascii_case(clean_b) {
+                return true;
+            }
+        }
+
+        // 3. Normalized title & artist overlap match
+        let (norm_title_a, _) = crate::engine::normalizer::normalize_title(&track.title);
+        let (norm_title_b, _) = crate::engine::normalizer::normalize_title(&existing.title);
+
+        let title_matches = if norm_title_a == norm_title_b && !norm_title_a.is_empty() {
+            true
+        } else {
+            let base_a = strip_parentheticals(&norm_title_a);
+            let base_b = strip_parentheticals(&norm_title_b);
+            let is_live_a = norm_title_a.contains("live");
+            let is_live_b = norm_title_b.contains("live");
+            let is_acoustic_a = norm_title_a.contains("acoustic");
+            let is_acoustic_b = norm_title_b.contains("acoustic");
+
+            !base_a.is_empty()
+                && base_a == base_b
+                && is_live_a == is_live_b
+                && is_acoustic_a == is_acoustic_b
+        };
+
+        if title_matches {
+            let artists_a: Vec<String> = track
+                .artists
+                .iter()
+                .map(|a| crate::engine::normalizer::canonicalize_string(a))
+                .filter(|a| !a.is_empty())
+                .collect();
+            let artists_b: Vec<String> = existing
+                .artists
+                .iter()
+                .map(|a| crate::engine::normalizer::canonicalize_string(a))
+                .filter(|a| !a.is_empty())
+                .collect();
+
+            if artists_a.is_empty() && artists_b.is_empty() {
+                return true;
+            }
+
+            let has_artist_overlap = artists_a.iter().any(|a| artists_b.contains(a));
+            if has_artist_overlap {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 struct ChunkWorkerContext {
@@ -679,7 +768,7 @@ impl TransferWorkerPool {
             .get_playlist_tracks(&target_id, None)
             .await
             .unwrap_or_default();
-        let pre_existing_ids: Vec<String> = pre_existing_tracks.into_iter().map(|t| t.id).collect();
+        let pre_existing_ids: Vec<String> = pre_existing_tracks.iter().map(|t| t.id.clone()).collect();
 
         // Stage 3: Write immutable pre-mutation snapshot to SQLite (SAFE-01)
         let snapshot_id = {
@@ -708,6 +797,91 @@ impl TransferWorkerPool {
         };
         let _ = self.app.emit("transfer:log", log);
 
+        // Deduplication phase for appending to existing playlists
+        let (tracks_to_transfer, skipped_duplicates) = if !config.is_new_playlist
+            && config.skip_duplicates
+            && !pre_existing_tracks.is_empty()
+        {
+            let mut deduplicated = Vec::new();
+            let mut skipped = 0usize;
+            let mut existing_pool = pre_existing_tracks.clone();
+
+            for track in config.tracks {
+                if is_duplicate_track(&track, &existing_pool) {
+                    skipped += 1;
+                    let log = TransferLogPayload {
+                        timestamp: chrono::Utc::now().timestamp(),
+                        worker_id: 0,
+                        message: format!(
+                            "Skipped '{}' (already in destination playlist)",
+                            track.title
+                        ),
+                        level: "info".to_string(),
+                    };
+                    let _ = self.app.emit("transfer:log", log);
+                } else {
+                    existing_pool.push(track.clone());
+                    deduplicated.push(track);
+                }
+            }
+
+            if skipped > 0 {
+                let log = TransferLogPayload {
+                    timestamp: chrono::Utc::now().timestamp(),
+                    worker_id: 0,
+                    message: format!(
+                        "Deduplication complete: skipped {} duplicate track(s). Transferring {} remaining track(s).",
+                        skipped,
+                        deduplicated.len()
+                    ),
+                    level: "info".to_string(),
+                };
+                let _ = self.app.emit("transfer:log", log);
+            }
+
+            (deduplicated, skipped)
+        } else {
+            (config.tracks, 0usize)
+        };
+
+        // If all tracks were duplicates, complete early without firing network mutations
+        if tracks_to_transfer.is_empty() {
+            let log = TransferLogPayload {
+                timestamp: chrono::Utc::now().timestamp(),
+                worker_id: 0,
+                message: "All requested tracks already exist in destination playlist. No transfer operations needed.".to_string(),
+                level: "info".to_string(),
+            };
+            let _ = self.app.emit("transfer:log", log);
+
+            let complete_payload = TransferProgressPayload {
+                job_id: config.job_id.clone(),
+                stage: "completed".to_string(),
+                processed: total,
+                total,
+                successful: 0,
+                failed: 0,
+                current_track: None,
+                worker_id: 0,
+                latency_ms: 0,
+                http_status: 200,
+                is_retry: false,
+            };
+            let _ = self.app.emit("transfer:progress", complete_payload);
+
+            return Ok(BatchTransferSummary {
+                job_id: config.job_id,
+                snapshot_id,
+                target_playlist_id: target_id,
+                total_tracks: total,
+                successful_tracks: 0,
+                failed_tracks: 0,
+                skipped_duplicates,
+                is_cancelled: false,
+                audit: None,
+            });
+        }
+
         // Stage 4: Chunked batch execution with true Tokio concurrency and retry
         let concurrency = resolve_concurrency(&config.target_service, config.concurrency);
         if config.target_service == "ytmusic" && config.concurrency > 1 {
@@ -723,11 +897,11 @@ impl TransferWorkerPool {
             let _ = self.app.emit("transfer:log", log);
         }
 
-        let processed_count = Arc::new(AtomicUsize::new(0));
+        let processed_count = Arc::new(AtomicUsize::new(skipped_duplicates));
         let successful_count = Arc::new(AtomicUsize::new(0));
         let failed_count = Arc::new(AtomicUsize::new(0));
         let retry_budget = Arc::new(AtomicU32::new(20));
-        let added_ids = Arc::new(std::sync::Mutex::new(Vec::with_capacity(total)));
+        let added_ids = Arc::new(std::sync::Mutex::new(Vec::with_capacity(tracks_to_transfer.len())));
 
         // YouTube Music silently truncates multi-action edit_playlist requests
         // after roughly 25 actions. Use one action per request there so an HTTP
@@ -737,8 +911,7 @@ impl TransferWorkerPool {
         } else {
             25
         };
-        let chunks: Vec<Vec<SourceTrack>> = config
-            .tracks
+        let chunks: Vec<Vec<SourceTrack>> = tracks_to_transfer
             .chunks(chunk_size)
             .map(|c| c.to_vec())
             .collect();
@@ -857,6 +1030,7 @@ impl TransferWorkerPool {
                 total_tracks: total,
                 successful_tracks: total_successful,
                 failed_tracks: total_failed,
+                skipped_duplicates,
                 is_cancelled: true,
                 audit: None,
             });
@@ -917,6 +1091,7 @@ impl TransferWorkerPool {
             total_tracks: total,
             successful_tracks: total_successful,
             failed_tracks: total_failed,
+            skipped_duplicates,
             is_cancelled: false,
             audit: audit_result,
         })
@@ -940,5 +1115,68 @@ mod tests {
         assert_eq!(resolve_concurrency("spotify", 4), 4);
         assert_eq!(resolve_concurrency("spotify", 0), 1);
         assert_eq!(resolve_concurrency("spotify", 16), 8);
+    }
+
+    fn sample_track(id: &str, title: &str, artists: Vec<&str>, isrc: Option<&str>) -> SourceTrack {
+        SourceTrack {
+            id: id.to_string(),
+            title: title.to_string(),
+            artists: artists.into_iter().map(|s| s.to_string()).collect(),
+            album: None,
+            duration_ms: 210000,
+            isrc: isrc.map(|s| s.to_string()),
+            is_explicit: false,
+            is_playable: true,
+            preview_url: None,
+            thumbnail_url: None,
+        }
+    }
+
+    #[test]
+    fn test_is_duplicate_track_by_exact_and_prefixed_id() {
+        let existing = vec![
+            sample_track("4cOdK2wGLETKBW3PvgPWqT", "Song A", vec!["Artist 1"], None),
+        ];
+
+        let incoming_exact = sample_track("4cOdK2wGLETKBW3PvgPWqT", "Different Title", vec!["Diff Artist"], None);
+        assert!(is_duplicate_track(&incoming_exact, &existing));
+
+        let incoming_prefixed = sample_track("spotify:track:4cOdK2wGLETKBW3PvgPWqT", "Different", vec!["Diff"], None);
+        assert!(is_duplicate_track(&incoming_prefixed, &existing));
+    }
+
+    #[test]
+    fn test_is_duplicate_track_by_isrc() {
+        let existing = vec![
+            sample_track("id_1", "Song Title", vec!["Artist"], Some("USUM71703861")),
+        ];
+
+        let incoming = sample_track("id_2", "Song Title (Radio Edit)", vec!["Different Artist Label"], Some("usum71703861"));
+        assert!(is_duplicate_track(&incoming, &existing));
+    }
+
+    #[test]
+    fn test_is_duplicate_track_by_normalized_title_and_artist_overlap() {
+        let existing = vec![
+            sample_track("id_1", "Deva Deva", vec!["Pritam", "Arijit Singh"], None),
+        ];
+
+        // Reversed artists or subsets still overlap on primary contributors
+        let incoming_reversed = sample_track("id_2", "Deva Deva (Film Version)", vec!["Arijit Singh", "Pritam"], None);
+        assert!(is_duplicate_track(&incoming_reversed, &existing));
+
+        // Remaster stripping
+        let incoming_remaster = sample_track("id_3", "Deva Deva - 2024 Remaster", vec!["Pritam"], None);
+        assert!(is_duplicate_track(&incoming_remaster, &existing));
+    }
+
+    #[test]
+    fn test_is_not_duplicate_when_artists_differ() {
+        let existing = vec![
+            sample_track("id_1", "Hello", vec!["Adele"], None),
+        ];
+
+        let incoming = sample_track("id_2", "Hello", vec!["Lionel Richie"], None);
+        assert!(!is_duplicate_track(&incoming, &existing));
     }
 }

@@ -58,6 +58,7 @@ function MainContent() {
       is_new_playlist: options.isNewPlaylist,
       tracks: tracksToTransfer,
       concurrency: options.concurrency,
+      skip_duplicates: options.skipDuplicates ?? true,
     });
   };
 

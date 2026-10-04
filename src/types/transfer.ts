@@ -47,6 +47,7 @@ export interface BatchTransferConfig {
   is_new_playlist: boolean;
   tracks: SourceTrack[];
   concurrency: number;
+  skip_duplicates?: boolean;
 }
 
 export interface BatchTransferSummary {
@@ -56,6 +57,7 @@ export interface BatchTransferSummary {
   total_tracks: number;
   successful_tracks: number;
   failed_tracks: number;
+  skipped_duplicates?: number;
   is_cancelled: boolean;
   audit: AuditResult | null;
 }

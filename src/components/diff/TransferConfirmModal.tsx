@@ -52,6 +52,7 @@ export interface TransferTargetOptions {
   isNewPlaylist: boolean;
   targetPlaylistId?: string | null;
   concurrency: number;
+  skipDuplicates?: boolean;
 }
 
 interface TransferConfirmModalProps {
@@ -80,6 +81,7 @@ export const TransferConfirmModal: React.FC<TransferConfirmModalProps> = ({
   const [entryMode, setEntryMode] = useState<"select" | "manual">("select");
   const [manualInput, setManualInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [skipDuplicates, setSkipDuplicates] = useState(true);
 
   const [destinationPlaylists, setDestinationPlaylists] = useState<Playlist[]>([]);
   const [isLoadingPlaylists, setIsLoadingPlaylists] = useState(false);
@@ -161,6 +163,7 @@ export const TransferConfirmModal: React.FC<TransferConfirmModalProps> = ({
       isNewPlaylist,
       targetPlaylistId: isNewPlaylist ? null : targetPlaylistId.trim() || null,
       concurrency: effectiveConcurrency,
+      skipDuplicates: isNewPlaylist ? false : skipDuplicates,
     });
   };
 
@@ -433,6 +436,26 @@ export const TransferConfirmModal: React.FC<TransferConfirmModalProps> = ({
                   </p>
                 </div>
               )}
+
+              {/* Destination Deduplication Option */}
+              <div className="pt-2.5 border-t border-zinc-800/80">
+                <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={skipDuplicates}
+                    onChange={(e) => setSkipDuplicates(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 rounded border-zinc-700 bg-zinc-900 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 cursor-pointer accent-emerald-500"
+                  />
+                  <div className="flex-1">
+                    <div className="text-xs font-medium text-zinc-200">
+                      Skip tracks already in destination playlist (deduplicate)
+                    </div>
+                    <p className="text-[11px] text-zinc-500 leading-relaxed">
+                      Checks track ID, ISRC, and title/artist to avoid adding tracks that already exist in this playlist.
+                    </p>
+                  </div>
+                </label>
+              </div>
             </div>
           )}
 

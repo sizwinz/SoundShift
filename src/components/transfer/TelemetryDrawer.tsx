@@ -339,6 +339,12 @@ export const TelemetryDrawer: React.FC<TelemetryDrawerProps> = ({
                   </div>
                 ) : null}
 
+                {summary?.skipped_duplicates !== undefined && summary.skipped_duplicates > 0 && (
+                  <div className="flex items-center gap-1.5 text-xs text-zinc-300 font-medium bg-zinc-900 border border-zinc-800 px-2.5 py-1 rounded">
+                    <span>Skipped: {summary.skipped_duplicates} duplicate{summary.skipped_duplicates === 1 ? "" : "s"}</span>
+                  </div>
+                )}
+
                 <div className="text-xs text-zinc-400 hidden md:block">
                   Snapshot: <span className="font-mono text-zinc-300">{summary?.snapshot_id || "Recorded"}</span>
                 </div>
