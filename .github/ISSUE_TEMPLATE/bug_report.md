@@ -20,7 +20,7 @@ A clear and concise description of what you expected to happen.
 
 **Platform & Environment**
 - OS: [e.g. Windows 11, macOS Sequoia, Ubuntu 24.04]
-- SoundShift Version: [e.g. 0.1.0]
+- SoundShift Version: [e.g. 0.9.0]
 - Source Service: [e.g. Spotify]
 - Target Service: [e.g. YouTube Music]
 

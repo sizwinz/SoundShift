@@ -88,7 +88,7 @@ export function Titlebar() {
           SOUNDSHIFT
         </span>
         <span className="text-[10px] font-mono text-zinc-500 bg-[#121215] px-1.5 py-0.5 rounded border border-[#27272a]">
-          v0.1.0-alpha
+          v0.9.0-beta
         </span>
       </div>
 
