@@ -57,7 +57,7 @@ export function Sidebar({
 
   return (
     <aside
-      className={`h-[calc(100vh-2.25rem)] bg-[#09090b] border-r border-[#27272a] flex flex-col justify-between transition-all duration-200 select-none ${
+      className={`h-full shrink-0 bg-[#09090b] border-r border-[#27272a] flex flex-col justify-between transition-all duration-200 select-none ${
         isCollapsed ? "w-16" : "w-[200px]"
       }`}
     >

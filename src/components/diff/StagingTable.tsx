@@ -268,7 +268,7 @@ export const StagingTable: React.FC<StagingTableProps> = ({
   };
 
   return (
-    <div className="flex h-[calc(100dvh-9.5rem)] min-h-[520px] flex-col overflow-hidden rounded-xl border border-[#27272a] bg-[#050507] shadow-2xl">
+    <div className="flex h-[calc(100dvh-10rem)] min-h-[480px] flex-col overflow-hidden rounded-xl border border-[#27272a] bg-[#050507] shadow-2xl">
       {/* Header bar */}
       <div className="flex items-center justify-between px-4 py-3 bg-[#09090b] border-b border-[#27272a]">
         <div className="flex items-center gap-3">

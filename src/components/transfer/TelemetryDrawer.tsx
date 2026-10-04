@@ -72,8 +72,8 @@ export const TelemetryDrawer: React.FC<TelemetryDrawerProps> = ({
 
   return (
     <aside
-      className={`fixed bottom-0 left-0 right-0 z-40 bg-[#09090b] border-t border-[#27272a] shadow-2xl transition-all duration-300 flex flex-col ${
-        isDrawerExpanded ? "h-[min(28rem,70dvh)]" : "h-14"
+      className={`shrink-0 w-full z-30 bg-[#09090b] border-t border-[#27272a] shadow-2xl transition-all duration-300 flex flex-col ${
+        isDrawerExpanded ? "h-[min(24rem,55dvh)]" : "h-14"
       }`}
       aria-label="Migration Telemetry Drawer"
     >
