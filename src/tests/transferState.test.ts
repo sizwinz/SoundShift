@@ -3,6 +3,7 @@ import {
   TransferHistoryEntry,
   AuditResult,
 } from "../types/transfer";
+import { parsePlaylistId } from "../components/diff/TransferConfirmModal";
 
 /**
  * Pure helper simulating the backend exponential backoff calculation with jitter (EXEC-03).
@@ -194,3 +195,31 @@ describe("1-Click Snapshot Rollback Plan Resolution (SAFE-03, D-07)", () => {
     expect(plan.preservedTracks).toBe(140);
   });
 });
+
+describe("Destination Playlist ID / URL Parsing", () => {
+  it("extracts ID from standard Spotify playlist URLs", () => {
+    expect(parsePlaylistId("https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M?si=abcd1234")).toBe("37i9dQZF1DXcBWIGoYBM5M");
+    expect(parsePlaylistId("https://open.spotify.com/playlist/7xGflW5m1k7n3")).toBe("7xGflW5m1k7n3");
+  });
+
+  it("extracts ID from Spotify URI format", () => {
+    expect(parsePlaylistId("spotify:playlist:37i9dQZF1DXcBWIGoYBM5M")).toBe("37i9dQZF1DXcBWIGoYBM5M");
+  });
+
+  it("extracts list ID from YouTube Music and YouTube playlist URLs", () => {
+    expect(parsePlaylistId("https://music.youtube.com/playlist?list=PL4fGSI1pDJn6jXS_PEoNcnwDXK9L9wBwJ")).toBe("PL4fGSI1pDJn6jXS_PEoNcnwDXK9L9wBwJ");
+    expect(parsePlaylistId("https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLrEnWoR732-B41UeyXWvW1QjL_mN2A6Kx")).toBe("PLrEnWoR732-B41UeyXWvW1QjL_mN2A6Kx");
+  });
+
+  it("preserves raw playlist IDs", () => {
+    expect(parsePlaylistId("PL4fGSI1pDJn6jXS_PEoNcnwDXK9L9wBwJ")).toBe("PL4fGSI1pDJn6jXS_PEoNcnwDXK9L9wBwJ");
+    expect(parsePlaylistId("37i9dQZF1DXcBWIGoYBM5M")).toBe("37i9dQZF1DXcBWIGoYBM5M");
+    expect(parsePlaylistId("   37i9dQZF1DXcBWIGoYBM5M   ")).toBe("37i9dQZF1DXcBWIGoYBM5M");
+  });
+
+  it("returns empty string for empty inputs", () => {
+    expect(parsePlaylistId("")).toBe("");
+    expect(parsePlaylistId("   ")).toBe("");
+  });
+});
+
