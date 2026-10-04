@@ -10,6 +10,7 @@ use crate::providers::traits::MusicProvider;
 use crate::providers::ytmusic::YouTubeMusicProvider;
 use crate::AppState;
 use rusqlite::params;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
@@ -63,38 +64,67 @@ pub async fn execute_playlist_matching(
             .ok_or_else(|| format!("Target service '{}' is not authenticated", target_service))?
     };
 
-    let target_provider: Box<dyn MusicProvider> = match target_service.as_str() {
-        "spotify" => Box::new(SpotifyProvider::new(target_token)),
-        "ytmusic" => Box::new(YouTubeMusicProvider::new(target_token)),
+    let target_provider: Arc<Box<dyn MusicProvider>> = match target_service.as_str() {
+        "spotify" => Arc::new(Box::new(SpotifyProvider::new(target_token))),
+        "ytmusic" => Arc::new(Box::new(YouTubeMusicProvider::new(target_token))),
         _ => return Err(format!("Unsupported target service: {}", target_service)),
     };
 
-    let rate_limiter = SearchRateLimiter::default();
+    let rate_limiter = Arc::new(SearchRateLimiter::default());
     let total = tracks.len();
-    let mut results = Vec::with_capacity(total);
+    let mut indexed_results: Vec<Option<MatchResult>> = (0..total).map(|_| None).collect();
+    let mut join_set = tokio::task::JoinSet::new();
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(4));
+    let processed_counter = Arc::new(AtomicUsize::new(0));
 
-    for (idx, track) in tracks.iter().enumerate() {
-        let match_result = match_track(
-            track,
-            &source_service,
-            &target_service,
-            target_provider.as_ref(),
-            Some(&*state.db),
-            &rate_limiter,
-        )
-        .await;
+    for (idx, track) in tracks.into_iter().enumerate() {
+        let sem_permit = semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|e| e.to_string())?;
+        let source_service = source_service.clone();
+        let target_service = target_service.clone();
+        let target_provider = target_provider.clone();
+        let rate_limiter = rate_limiter.clone();
+        let db = state.db.clone();
 
-        // Emit live progress to frontend
-        let payload = serde_json::json!({
-            "playlist_id": playlist_id,
-            "processed": idx + 1,
-            "total": total,
-            "current_result": match_result,
+        join_set.spawn(async move {
+            let _permit = sem_permit;
+            let result = match_track(
+                &track,
+                &source_service,
+                &target_service,
+                target_provider.as_ref().as_ref(),
+                Some(&*db),
+                &rate_limiter,
+            )
+            .await;
+            (idx, result)
         });
-        let _ = app.emit("matching:progress", payload);
-
-        results.push(match_result);
     }
+
+    while let Some(res) = join_set.join_next().await {
+        match res {
+            Ok((idx, match_result)) => {
+                let processed = processed_counter.fetch_add(1, Ordering::SeqCst) + 1;
+                let payload = serde_json::json!({
+                    "playlist_id": playlist_id,
+                    "processed": processed,
+                    "total": total,
+                    "current_result": match_result,
+                });
+                let _ = app.emit("matching:progress", payload);
+
+                indexed_results[idx] = Some(match_result);
+            }
+            Err(e) => {
+                eprintln!("Error joining matching task: {}", e);
+            }
+        }
+    }
+
+    let results: Vec<MatchResult> = indexed_results.into_iter().flatten().collect();
 
     Ok(results)
 }
