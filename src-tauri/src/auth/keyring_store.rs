@@ -5,47 +5,78 @@ use aes_gcm::{
 use keyring::Entry;
 use rand::{thread_rng, Rng};
 use rusqlite::{params, Connection};
+use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 
 const SERVICE_NAME: &str = "SoundShift";
 
-/// Generates a random AES-256-GCM envelope for fallback-only secret storage.
-fn generate_fallback_key() -> [u8; 32] {
+/// Derives a consistent 256-bit machine master key from an application salt and host identity.
+fn get_fallback_master_key() -> Result<[u8; 32], String> {
+    let machine_id = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "SoundShiftFallbackHost".to_string());
+    let user_name = std::env::var("USERNAME")
+        .or_else(|_| std::env::var("USER"))
+        .unwrap_or_else(|_| "SoundShiftUser".to_string());
+
+    let seed = format!("SoundShift::Entropy::Salt::v2::{}:{}", machine_id, user_name);
+    let hash = Sha256::digest(seed.as_bytes());
     let mut key = [0u8; 32];
-    thread_rng().fill(&mut key[..]);
-    key
+    key.copy_from_slice(&hash);
+    Ok(key)
 }
 
-/// Creates an encrypted envelope payload with a random nonce and per-entry key.
+/// Encrypts plaintext using AES-256-GCM with the host-derived master key and a random 96-bit nonce.
+/// Produces a versioned envelope in format `fallback:v2:{nonce_hex}:{ciphertext_hex}`.
 pub fn encrypt_aes_gcm(plaintext: &str) -> Result<String, String> {
-    let key = generate_fallback_key();
+    let key = get_fallback_master_key()?;
     let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| e.to_string())?;
-    let nonce: [u8; 12] = thread_rng().gen();
-    let nonce = Nonce::from_slice(&nonce);
+    let mut nonce_bytes = [0u8; 12];
+    thread_rng().fill(&mut nonce_bytes[..]);
+    let nonce = Nonce::from_slice(&nonce_bytes);
 
     let ciphertext = cipher
         .encrypt(nonce, plaintext.as_bytes())
         .map_err(|e| format!("Encryption error: {}", e))?;
 
-    let key_hex = format!("{:x}", fmt_hex::Hex(&key));
-    let nonce_hex = format!("{:x}", fmt_hex::Hex(nonce.as_slice()));
+    let nonce_hex = format!("{:x}", fmt_hex::Hex(&nonce_bytes));
     let ciphertext_hex = format!("{:x}", fmt_hex::Hex(&ciphertext));
-    let envelope = format!("{}:{}", key_hex, nonce_hex);
-    Ok(format!("{}:{}", envelope, ciphertext_hex))
+    Ok(format!("fallback:v2:{}:{}", nonce_hex, ciphertext_hex))
 }
 
-/// Transparently decrypts ciphertext secret using the random envelope stored with the value.
-pub fn decrypt_aes_gcm(ciphertext_hex: &str) -> Result<String, String> {
-    let trimmed = ciphertext_hex.trim();
+/// Decrypts ciphertext secret. Supports `fallback:v2:` using the host-derived master key,
+/// with backwards-compatible read support for legacy `fallback:v1:` records.
+pub fn decrypt_aes_gcm(payload: &str) -> Result<String, String> {
+    let trimmed = payload.trim();
     if trimmed.is_empty() {
         return Err("Empty ciphertext payload".to_string());
     }
 
-    let parts: Vec<&str> = trimmed.split(':').collect();
+    if let Some(v2_body) = trimmed.strip_prefix("fallback:v2:") {
+        let parts: Vec<&str> = v2_body.split(':').collect();
+        if parts.len() != 2 {
+            return Err("Invalid fallback:v2 payload format".to_string());
+        }
+        let nonce_bytes =
+            hex_to_bytes(parts[0]).map_err(|e| format!("Nonce decode error: {}", e))?;
+        let cipher_bytes =
+            hex_to_bytes(parts[1]).map_err(|e| format!("Ciphertext decode error: {}", e))?;
+        let key = get_fallback_master_key()?;
+        let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| e.to_string())?;
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let plaintext_bytes = cipher
+            .decrypt(nonce, cipher_bytes.as_ref())
+            .map_err(|e| format!("Decryption error: {}", e))?;
+        return String::from_utf8(plaintext_bytes).map_err(|e| e.to_string());
+    }
+
+    let legacy_body = trimmed.strip_prefix("fallback:v1:").unwrap_or(trimmed);
+    let parts: Vec<&str> = legacy_body.split(':').collect();
 
     if parts.len() == 3 {
-        let key_bytes = hex_to_bytes(parts[0]).map_err(|e| format!("Key decode error: {}", e))?;
+        let key_bytes =
+            hex_to_bytes(parts[0]).map_err(|e| format!("Key decode error: {}", e))?;
         let nonce_bytes =
             hex_to_bytes(parts[1]).map_err(|e| format!("Nonce decode error: {}", e))?;
         let cipher_bytes =
@@ -62,15 +93,21 @@ pub fn decrypt_aes_gcm(ciphertext_hex: &str) -> Result<String, String> {
         return String::from_utf8(plaintext_bytes).map_err(|e| e.to_string());
     }
 
-    let key = [0u8; 32];
-    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| e.to_string())?;
-    let nonce = Nonce::from_slice(b"SoundShift12");
-    let bytes = hex_to_bytes(trimmed).map_err(|e| format!("Hex decode error: {}", e))?;
-    let plaintext_bytes = cipher
-        .decrypt(nonce, bytes.as_ref())
-        .map_err(|e| format!("Decryption error: {}", e))?;
+    if parts.len() == 2 {
+        let nonce_bytes =
+            hex_to_bytes(parts[0]).map_err(|e| format!("Nonce decode error: {}", e))?;
+        let cipher_bytes =
+            hex_to_bytes(parts[1]).map_err(|e| format!("Ciphertext decode error: {}", e))?;
+        let key = get_fallback_master_key()?;
+        let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| e.to_string())?;
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let plaintext_bytes = cipher
+            .decrypt(nonce, cipher_bytes.as_ref())
+            .map_err(|e| format!("Decryption error: {}", e))?;
+        return String::from_utf8(plaintext_bytes).map_err(|e| e.to_string());
+    }
 
-    String::from_utf8(plaintext_bytes).map_err(|e| e.to_string())
+    Err("Unrecognized ciphertext envelope format".to_string())
 }
 
 mod fmt_hex {
@@ -100,8 +137,8 @@ fn hex_to_bytes(s: &str) -> Result<Vec<u8>, String> {
         .collect()
 }
 
-/// Stores credentials in the OS keyring. The SQLite fallback is only used when the keyring is unavailable
-/// and stores a versioned random-envelope payload rather than a deterministic key.
+/// Stores credentials in the OS keyring. When keyring is unavailable, stores in SQLite
+/// using the host-derived master key in versioned envelope format `fallback:v2:nonce:ciphertext`.
 pub fn store_credential(service: &str, secret: &str, conn: &Connection) -> Result<(), String> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -110,9 +147,6 @@ pub fn store_credential(service: &str, secret: &str, conn: &Connection) -> Resul
 
     if let Ok(entry) = Entry::new(SERVICE_NAME, service) {
         if entry.set_password(secret).is_ok() {
-            // Prefer the OS keyring as the authoritative credential store. If it succeeds,
-            // do not populate the SQLite fallback so stale fallback entries do not mask the
-            // live platform credential state.
             return Ok(());
         }
     }
@@ -120,7 +154,7 @@ pub fn store_credential(service: &str, secret: &str, conn: &Connection) -> Resul
     let encrypted = encrypt_aes_gcm(secret)?;
     conn.execute(
         "INSERT OR REPLACE INTO service_sessions (service_id, auth_data, updated_at) VALUES (?1, ?2, ?3)",
-        params![service, format!("fallback:v1:{}", encrypted), now],
+        params![service, encrypted, now],
     )
     .map_err(|e| e.to_string())?;
 
@@ -128,6 +162,7 @@ pub fn store_credential(service: &str, secret: &str, conn: &Connection) -> Resul
 }
 
 /// Retrieves stored credentials, checking OS Keyring first, then SQLite fallback.
+/// Migrates legacy `fallback:v1:` records to `fallback:v2:` on first read.
 pub fn retrieve_credential(service: &str, conn: &Connection) -> Result<Option<String>, String> {
     // 1. Primary check: platform OS Keyring
     if let Ok(entry) = Entry::new(SERVICE_NAME, service) {
@@ -147,11 +182,26 @@ pub fn retrieve_credential(service: &str, conn: &Connection) -> Result<Option<St
 
     match auth_data {
         Ok(data) => {
-            if let Some(encrypted_part) = data.strip_prefix("fallback:v1:") {
-                let decrypted = decrypt_aes_gcm(encrypted_part)?;
+            if data.starts_with("fallback:v2:") {
+                let decrypted = decrypt_aes_gcm(&data)?;
+                Ok(Some(decrypted))
+            } else if data.starts_with("fallback:v1:") {
+                let decrypted = decrypt_aes_gcm(&data)?;
+                if let Ok(re_encrypted) = encrypt_aes_gcm(&decrypted) {
+                    let _ = conn.execute(
+                        "UPDATE service_sessions SET auth_data = ?1 WHERE service_id = ?2",
+                        params![re_encrypted, service],
+                    );
+                }
                 Ok(Some(decrypted))
             } else if let Some(encrypted_part) = data.strip_prefix("encrypted:") {
                 let decrypted = decrypt_aes_gcm(encrypted_part)?;
+                if let Ok(re_encrypted) = encrypt_aes_gcm(&decrypted) {
+                    let _ = conn.execute(
+                        "UPDATE service_sessions SET auth_data = ?1 WHERE service_id = ?2",
+                        params![re_encrypted, service],
+                    );
+                }
                 Ok(Some(decrypted))
             } else if data == "keyring:managed" {
                 Ok(None)
@@ -254,9 +304,72 @@ mod tests {
         let secret = "AQB-sample-sp_dc-token-123456789";
         let encrypted = encrypt_aes_gcm(secret).expect("encryption failed");
         assert_ne!(secret, encrypted);
+        assert!(encrypted.starts_with("fallback:v2:"));
 
         let decrypted = decrypt_aes_gcm(&encrypted).expect("decryption failed");
         assert_eq!(secret, decrypted);
+    }
+
+    #[test]
+    fn test_fallback_master_key_consistency() {
+        let key1 = get_fallback_master_key().expect("key derivation 1");
+        let key2 = get_fallback_master_key().expect("key derivation 2");
+        assert_eq!(key1, key2);
+        assert_ne!(key1, [0u8; 32]);
+    }
+
+    #[test]
+    fn test_legacy_fallback_v1_migration() {
+        let conn = Connection::open_in_memory().expect("open memory db");
+        create_tables(&conn).expect("create tables");
+
+        // Manually construct a legacy v1 envelope: fallback:v1:key_hex:nonce_hex:ciphertext_hex
+        let legacy_key = [7u8; 32];
+        let legacy_nonce = [9u8; 12];
+        let cipher = Aes256Gcm::new_from_slice(&legacy_key).expect("cipher");
+        let secret = "legacy_secret_cookie_token_456";
+        let ciphertext = cipher
+            .encrypt(Nonce::from_slice(&legacy_nonce), secret.as_bytes())
+            .expect("encrypt");
+
+        let key_hex = format!("{:x}", fmt_hex::Hex(&legacy_key));
+        let nonce_hex = format!("{:x}", fmt_hex::Hex(&legacy_nonce));
+        let cipher_hex = format!("{:x}", fmt_hex::Hex(&ciphertext));
+        let legacy_payload = format!("fallback:v1:{}:{}:{}", key_hex, nonce_hex, cipher_hex);
+
+        conn.execute(
+            "INSERT INTO service_sessions (service_id, auth_data, updated_at) VALUES (?1, ?2, ?3)",
+            params!["test_legacy_migration_service", legacy_payload, 1000],
+        )
+        .expect("insert legacy session");
+
+        // Retrieve should decrypt and migrate to fallback:v2
+        let retrieved =
+            retrieve_credential("test_legacy_migration_service", &conn).expect("retrieve legacy");
+        assert_eq!(retrieved, Some(secret.to_string()));
+
+        // Check that auth_data in SQLite was migrated to fallback:v2
+        let updated_auth_data: String = conn
+            .query_row(
+                "SELECT auth_data FROM service_sessions WHERE service_id = 'test_legacy_migration_service'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query updated auth_data");
+        assert!(updated_auth_data.starts_with("fallback:v2:"));
+
+        // Subsequent retrieve should succeed with migrated v2 record
+        let second_retrieved =
+            retrieve_credential("test_legacy_migration_service", &conn).expect("retrieve migrated");
+        assert_eq!(second_retrieved, Some(secret.to_string()));
+    }
+
+    #[test]
+    fn test_zero_key_rejected() {
+        // Plain hex that cannot be decoded as valid v1/v2 envelope
+        let invalid = "00112233445566778899aabbccddeeff";
+        let res = decrypt_aes_gcm(invalid);
+        assert!(res.is_err());
     }
 
     #[test]
