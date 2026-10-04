@@ -195,6 +195,24 @@ pub fn is_duplicate_track(track: &SourceTrack, existing_tracks: &[SourceTrack]) 
     false
 }
 
+fn consume_retry_budget(budget: &AtomicU32) -> bool {
+    let mut current = budget.load(Ordering::SeqCst);
+    loop {
+        if current == 0 {
+            return false;
+        }
+        match budget.compare_exchange_weak(
+            current,
+            current - 1,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        ) {
+            Ok(_) => return true,
+            Err(actual) => current = actual,
+        }
+    }
+}
+
 struct ChunkWorkerContext {
     job_id: String,
     target_id: String,
@@ -393,16 +411,7 @@ async fn process_chunk(ctx: ChunkWorkerContext) {
                     }
                 }
 
-                let has_budget = ctx
-                    .retry_budget
-                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |b| {
-                        if b > 0 {
-                            Some(b - 1)
-                        } else {
-                            None
-                        }
-                    })
-                    .is_ok();
+                let has_budget = consume_retry_budget(&ctx.retry_budget);
 
                 if is_retryable(kind) && attempt < ctx.max_retries && has_budget {
                     let delay = retry_delay_ms(attempt, None).max(ctx.base_delay_ms);
@@ -601,16 +610,7 @@ async fn process_chunk(ctx: ChunkWorkerContext) {
                             }
                         }
 
-                        let has_budget = ctx
-                            .retry_budget
-                            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |b| {
-                                if b > 0 {
-                                    Some(b - 1)
-                                } else {
-                                    None
-                                }
-                            })
-                            .is_ok();
+                        let has_budget = consume_retry_budget(&ctx.retry_budget);
 
                         if is_retryable(kind) && track_attempt < ctx.max_retries && has_budget {
                             let delay =
@@ -1178,5 +1178,16 @@ mod tests {
 
         let incoming = sample_track("id_2", "Hello", vec!["Lionel Richie"], None);
         assert!(!is_duplicate_track(&incoming, &existing));
+    }
+
+    #[test]
+    fn test_consume_retry_budget() {
+        let budget = AtomicU32::new(2);
+        assert!(consume_retry_budget(&budget));
+        assert_eq!(budget.load(Ordering::SeqCst), 1);
+        assert!(consume_retry_budget(&budget));
+        assert_eq!(budget.load(Ordering::SeqCst), 0);
+        assert!(!consume_retry_budget(&budget));
+        assert_eq!(budget.load(Ordering::SeqCst), 0);
     }
 }
