@@ -102,6 +102,9 @@ export function SettingsPage() {
                 <div className="mt-2 flex justify-between text-[10px] text-zinc-600">
                   <span>Safer, slower</span><span>1</span><span>8</span><span>Faster</span>
                 </div>
+                <p className="mt-2 text-[11px] text-zinc-500">
+                  Note: YouTube Music destinations automatically serialize to 1 worker to prevent 409 Conflict collisions.
+                </p>
               </label>
               <SettingToggle
                 icon={<ShieldCheck className="h-4 w-4" />}

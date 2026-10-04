@@ -98,6 +98,14 @@ impl TransferControl {
     }
 }
 
+pub fn resolve_concurrency(target_service: &str, requested_concurrency: usize) -> usize {
+    if target_service == "ytmusic" {
+        1
+    } else {
+        requested_concurrency.clamp(1, 8)
+    }
+}
+
 struct ChunkWorkerContext {
     job_id: String,
     target_id: String,
@@ -570,6 +578,8 @@ async fn process_chunk(ctx: ChunkWorkerContext) {
                             latency_ms,
                             http_status: if matches!(kind, ProviderErrorKind::RateLimited) {
                                 429
+                            } else if matches!(kind, ProviderErrorKind::Conflict) {
+                                409
                             } else {
                                 500
                             },
@@ -699,7 +709,20 @@ impl TransferWorkerPool {
         let _ = self.app.emit("transfer:log", log);
 
         // Stage 4: Chunked batch execution with true Tokio concurrency and retry
-        let concurrency = config.concurrency.clamp(1, 8);
+        let concurrency = resolve_concurrency(&config.target_service, config.concurrency);
+        if config.target_service == "ytmusic" && config.concurrency > 1 {
+            let log = TransferLogPayload {
+                timestamp: chrono::Utc::now().timestamp(),
+                worker_id: 0,
+                message: format!(
+                    "YouTube Music target service enforces single-writer playlist mutations. Concurrency serialized to 1 worker (requested: {}) to prevent 409 Conflict collisions.",
+                    config.concurrency
+                ),
+                level: "info".to_string(),
+            };
+            let _ = self.app.emit("transfer:log", log);
+        }
+
         let processed_count = Arc::new(AtomicUsize::new(0));
         let successful_count = Arc::new(AtomicUsize::new(0));
         let failed_count = Arc::new(AtomicUsize::new(0));
@@ -897,5 +920,25 @@ impl TransferWorkerPool {
             is_cancelled: false,
             audit: audit_result,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_concurrency_serializes_ytmusic() {
+        assert_eq!(resolve_concurrency("ytmusic", 8), 1);
+        assert_eq!(resolve_concurrency("ytmusic", 4), 1);
+        assert_eq!(resolve_concurrency("ytmusic", 1), 1);
+    }
+
+    #[test]
+    fn test_resolve_concurrency_preserves_other_services() {
+        assert_eq!(resolve_concurrency("spotify", 8), 8);
+        assert_eq!(resolve_concurrency("spotify", 4), 4);
+        assert_eq!(resolve_concurrency("spotify", 0), 1);
+        assert_eq!(resolve_concurrency("spotify", 16), 8);
     }
 }

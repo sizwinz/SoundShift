@@ -48,6 +48,11 @@ export const TransferConfirmModal: React.FC<TransferConfirmModalProps> = ({
     }
   });
 
+  const isYtMusic =
+    targetService.toLowerCase().includes("ytmusic") ||
+    targetService.toLowerCase().includes("youtube");
+  const effectiveConcurrency = isYtMusic ? 1 : concurrency;
+
   if (!isOpen) return null;
 
   const totalSelected = selectedTrackIds.size;
@@ -73,7 +78,7 @@ export const TransferConfirmModal: React.FC<TransferConfirmModalProps> = ({
       playlistName: isNewPlaylist ? customTitle || playlistTitle : playlistTitle,
       isNewPlaylist,
       targetPlaylistId: isNewPlaylist ? null : targetPlaylistId.trim() || null,
-      concurrency,
+      concurrency: effectiveConcurrency,
     });
   };
 
@@ -193,25 +198,37 @@ export const TransferConfirmModal: React.FC<TransferConfirmModalProps> = ({
                 <span>Worker Concurrency</span>
               </label>
               <span className="text-xs font-mono text-emerald-400 font-semibold">
-                {concurrency} {concurrency === 1 ? "worker" : "workers"}
+                {effectiveConcurrency} {effectiveConcurrency === 1 ? "worker" : "workers"}
               </span>
             </div>
-            <div className="flex items-center gap-2">
-              {[1, 2, 4, 6, 8].map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => setConcurrency(c)}
-                  className={`flex-1 py-1.5 rounded text-xs font-medium border transition-colors cursor-pointer ${
-                    concurrency === c
-                      ? "bg-emerald-500 text-black border-emerald-400 font-bold"
-                      : "bg-[#121215] border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700"
-                  }`}
-                >
-                  {c} {c === 4 && <span className="text-[9px] block text-inherit font-normal">(Default)</span>}
-                </button>
-              ))}
-            </div>
+
+            {isYtMusic ? (
+              <div className="p-3 rounded-lg bg-zinc-900/70 border border-zinc-800 text-[11px] space-y-1">
+                <div className="flex items-center gap-1.5 text-amber-400 font-medium">
+                  <span>Single-Writer Mode Active</span>
+                </div>
+                <p className="text-[10px] text-zinc-400 leading-relaxed">
+                  YouTube Music enforces strict playlist edit consistency. Mutations are serialized to 1 worker to eliminate 409 Conflict collisions and preserve playlist sequencing.
+                </p>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                {[1, 2, 4, 6, 8].map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setConcurrency(c)}
+                    className={`flex-1 py-1.5 rounded text-xs font-medium border transition-colors cursor-pointer ${
+                      concurrency === c
+                        ? "bg-emerald-500 text-black border-emerald-400 font-bold"
+                        : "bg-[#121215] border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700"
+                    }`}
+                  >
+                    {c} {c === 4 && <span className="text-[9px] block text-inherit font-normal">(Default)</span>}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Breakdown Stats */}

@@ -7,6 +7,7 @@ pub enum ProviderErrorKind {
     RateLimited,
     Transient,
     Timeout,
+    Conflict,
     MalformedResponse,
     Pagination,
     Cancelled,
@@ -32,6 +33,8 @@ pub fn classify_error(message: &str) -> ProviderErrorKind {
     } else if lower.contains("429") || lower.contains("rate limit") || lower.contains("retry-after")
     {
         ProviderErrorKind::RateLimited
+    } else if lower.contains("409") || lower.contains("conflict") {
+        ProviderErrorKind::Conflict
     } else if lower.contains("timeout")
         || lower.contains("timed out")
         || lower.contains("connection")
@@ -66,7 +69,10 @@ pub fn classify_error(message: &str) -> ProviderErrorKind {
 pub fn is_retryable(kind: ProviderErrorKind) -> bool {
     matches!(
         kind,
-        ProviderErrorKind::RateLimited | ProviderErrorKind::Transient | ProviderErrorKind::Timeout
+        ProviderErrorKind::RateLimited
+            | ProviderErrorKind::Transient
+            | ProviderErrorKind::Timeout
+            | ProviderErrorKind::Conflict
     )
 }
 
@@ -96,5 +102,12 @@ mod tests {
     #[test]
     fn honors_retry_after_without_exceeding_cap() {
         assert_eq!(retry_delay_ms(0, Some(60_000)), 30_000);
+    }
+
+    #[test]
+    fn classifies_conflict_and_is_retryable() {
+        let kind = classify_error("Add tracks failed with status: 409 Conflict");
+        assert_eq!(kind, ProviderErrorKind::Conflict);
+        assert!(is_retryable(kind));
     }
 }
