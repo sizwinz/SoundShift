@@ -30,6 +30,7 @@ src-tauri/gen/schemas/*.custom.json
 .planning/
 .kilo/
 .gemini/
+GEMINI.md
 
 # IDE and Editor settings
 .vscode/*
