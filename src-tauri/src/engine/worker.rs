@@ -8,7 +8,7 @@ use crate::providers::error::{
 };
 use crate::providers::traits::MusicProvider;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Notify;
@@ -95,6 +95,503 @@ impl TransferControl {
     pub fn cancel(&self) {
         self.is_cancelled.store(true, Ordering::SeqCst);
         self.pause_notify.notify_waiters();
+    }
+}
+
+struct ChunkWorkerContext {
+    job_id: String,
+    target_id: String,
+    total: usize,
+    chunk_idx: usize,
+    worker_id: usize,
+    chunk: Vec<SourceTrack>,
+    provider: Arc<Box<dyn MusicProvider>>,
+    db: Arc<std::sync::Mutex<rusqlite::Connection>>,
+    app: AppHandle,
+    control: TransferControl,
+    processed_count: Arc<AtomicUsize>,
+    successful_count: Arc<AtomicUsize>,
+    failed_count: Arc<AtomicUsize>,
+    retry_budget: Arc<AtomicU32>,
+    added_ids: Arc<std::sync::Mutex<Vec<String>>>,
+    base_delay_ms: u64,
+    max_retries: u32,
+    chunk_size: usize,
+}
+
+async fn process_chunk(ctx: ChunkWorkerContext) {
+    if ctx.control.is_cancelled.load(Ordering::SeqCst) {
+        return;
+    }
+
+    while ctx.control.is_paused.load(Ordering::SeqCst) {
+        if ctx.control.is_cancelled.load(Ordering::SeqCst) {
+            return;
+        }
+        ctx.control.pause_notify.notified().await;
+    }
+
+    if ctx.control.is_cancelled.load(Ordering::SeqCst) {
+        return;
+    }
+
+    let chunk_track_ids: Vec<String> = ctx.chunk.iter().map(|t| t.id.clone()).collect();
+    let operation_id = match ctx.db.lock() {
+        Ok(conn) => {
+            match record_operation_intent(&conn, &ctx.job_id, ctx.chunk_idx, &chunk_track_ids) {
+                Ok(op_id) => op_id,
+                Err(e) => {
+                    eprintln!("Failed to record operation intent: {}", e);
+                    format!("op_chunk_{}", ctx.chunk_idx)
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to acquire db lock for operation intent: {}", e);
+            format!("op_chunk_{}", ctx.chunk_idx)
+        }
+    };
+
+    let mut attempt = 0;
+    let mut chunk_succeeded = false;
+    let mut chunk_ambiguous = false;
+
+    // Step 4a: Atomic batch addition
+    loop {
+        if ctx.control.is_cancelled.load(Ordering::SeqCst) {
+            break;
+        }
+
+        while ctx.control.is_paused.load(Ordering::SeqCst) {
+            if ctx.control.is_cancelled.load(Ordering::SeqCst) {
+                break;
+            }
+            ctx.control.pause_notify.notified().await;
+        }
+
+        if ctx.control.is_cancelled.load(Ordering::SeqCst) {
+            break;
+        }
+
+        let start = std::time::Instant::now();
+        let res = ctx
+            .provider
+            .add_tracks_to_playlist(&ctx.target_id, &chunk_track_ids)
+            .await;
+        let latency_ms = start.elapsed().as_millis() as u64;
+
+        match res {
+            Ok(_) => {
+                if let Ok(conn) = ctx.db.lock() {
+                    let _ = update_operation_outcome(
+                        &conn,
+                        &operation_id,
+                        OperationOutcome::Confirmed,
+                        attempt + 1,
+                        Some("accepted"),
+                    );
+                }
+                chunk_succeeded = true;
+                let per_track_latency = (latency_ms / (ctx.chunk.len() as u64).max(1)).max(1);
+
+                let mut chunk_added_ids = Vec::with_capacity(ctx.chunk.len());
+                for track in &ctx.chunk {
+                    let succ = ctx.successful_count.fetch_add(1, Ordering::SeqCst) + 1;
+                    let proc = ctx.processed_count.fetch_add(1, Ordering::SeqCst) + 1;
+                    let fail = ctx.failed_count.load(Ordering::SeqCst);
+                    chunk_added_ids.push(track.id.clone());
+
+                    let progress = TransferProgressPayload {
+                        job_id: ctx.job_id.clone(),
+                        stage: "transferring".to_string(),
+                        processed: proc,
+                        total: ctx.total,
+                        successful: succ,
+                        failed: fail,
+                        current_track: Some(format!(
+                            "{} - {}",
+                            track.title,
+                            track.artists.join(", ")
+                        )),
+                        worker_id: ctx.worker_id,
+                        latency_ms: per_track_latency,
+                        http_status: 200,
+                        is_retry: attempt > 0,
+                    };
+                    let _ = ctx.app.emit("transfer:progress", progress);
+
+                    let log = TransferLogPayload {
+                        timestamp: chrono::Utc::now().timestamp(),
+                        worker_id: ctx.worker_id,
+                        message: format!("Added '{}' ({}ms)", track.title, per_track_latency),
+                        level: "info".to_string(),
+                    };
+                    let _ = ctx.app.emit("transfer:log", log);
+                }
+
+                if let Ok(mut ids) = ctx.added_ids.lock() {
+                    ids.extend(chunk_added_ids);
+                }
+                break;
+            }
+            Err(err_msg) => {
+                let kind = classify_error(&err_msg);
+
+                if kind == ProviderErrorKind::Timeout {
+                    if let Ok(reconciled) = ctx
+                        .provider
+                        .reconcile_added_tracks(&ctx.target_id, &chunk_track_ids)
+                        .await
+                    {
+                        match reconciled {
+                            ReconciliationResult::Confirmed => {
+                                if let Ok(conn) = ctx.db.lock() {
+                                    let _ = update_operation_outcome(
+                                        &conn,
+                                        &operation_id,
+                                        OperationOutcome::Confirmed,
+                                        attempt + 1,
+                                        Some("confirmed by read-back"),
+                                    );
+                                }
+                                chunk_succeeded = true;
+                                let mut chunk_added_ids = Vec::with_capacity(ctx.chunk.len());
+                                for track in &ctx.chunk {
+                                    ctx.successful_count.fetch_add(1, Ordering::SeqCst);
+                                    ctx.processed_count.fetch_add(1, Ordering::SeqCst);
+                                    chunk_added_ids.push(track.id.clone());
+                                }
+                                if let Ok(mut ids) = ctx.added_ids.lock() {
+                                    ids.extend(chunk_added_ids);
+                                }
+                                break;
+                            }
+                            ReconciliationResult::Uncertain => {
+                                if let Ok(conn) = ctx.db.lock() {
+                                    let _ = update_operation_outcome(
+                                        &conn,
+                                        &operation_id,
+                                        OperationOutcome::Ambiguous,
+                                        attempt + 1,
+                                        Some(&err_msg),
+                                    );
+                                }
+                                chunk_ambiguous = true;
+                                break;
+                            }
+                            ReconciliationResult::NotApplied => {}
+                        }
+                    } else {
+                        if let Ok(conn) = ctx.db.lock() {
+                            let _ = update_operation_outcome(
+                                &conn,
+                                &operation_id,
+                                OperationOutcome::Ambiguous,
+                                attempt + 1,
+                                Some(&err_msg),
+                            );
+                        }
+                        chunk_ambiguous = true;
+                        break;
+                    }
+                }
+
+                let has_budget = ctx
+                    .retry_budget
+                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |b| {
+                        if b > 0 {
+                            Some(b - 1)
+                        } else {
+                            None
+                        }
+                    })
+                    .is_ok();
+
+                if is_retryable(kind) && attempt < ctx.max_retries && has_budget {
+                    let delay = retry_delay_ms(attempt, None).max(ctx.base_delay_ms);
+                    attempt += 1;
+
+                    let log = TransferLogPayload {
+                        timestamp: chrono::Utc::now().timestamp(),
+                        worker_id: ctx.worker_id,
+                        message: format!(
+                            "Transient error ({}) for batch {}. Retrying ({}/{}) in {}ms",
+                            err_msg,
+                            ctx.chunk_idx + 1,
+                            attempt,
+                            ctx.max_retries,
+                            delay
+                        ),
+                        level: "warn".to_string(),
+                    };
+                    let _ = ctx.app.emit("transfer:log", log);
+
+                    tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                    continue;
+                }
+
+                if let Ok(conn) = ctx.db.lock() {
+                    let outcome = if kind == ProviderErrorKind::Timeout {
+                        OperationOutcome::Ambiguous
+                    } else {
+                        OperationOutcome::Failed
+                    };
+                    let _ = update_operation_outcome(
+                        &conn,
+                        &operation_id,
+                        outcome,
+                        attempt + 1,
+                        Some(&err_msg),
+                    );
+                }
+
+                let log = TransferLogPayload {
+                    timestamp: chrono::Utc::now().timestamp(),
+                    worker_id: ctx.worker_id,
+                    message: format!(
+                        "Batch {} failed ({}). Falling back to individual track insertion.",
+                        ctx.chunk_idx + 1,
+                        err_msg
+                    ),
+                    level: "warn".to_string(),
+                };
+                let _ = ctx.app.emit("transfer:log", log);
+                break;
+            }
+        }
+    }
+
+    // Step 4b: Fallback to individual track addition
+    if !chunk_succeeded && !chunk_ambiguous && !ctx.control.is_cancelled.load(Ordering::SeqCst) {
+        for (t_idx, track) in ctx.chunk.into_iter().enumerate() {
+            if ctx.control.is_cancelled.load(Ordering::SeqCst) {
+                break;
+            }
+
+            while ctx.control.is_paused.load(Ordering::SeqCst) {
+                if ctx.control.is_cancelled.load(Ordering::SeqCst) {
+                    break;
+                }
+                ctx.control.pause_notify.notified().await;
+            }
+
+            if ctx.control.is_cancelled.load(Ordering::SeqCst) {
+                break;
+            }
+
+            let mut track_attempt = 0;
+            let track_seq = ctx.chunk_idx * ctx.chunk_size + t_idx;
+            let track_op_id = match ctx.db.lock() {
+                Ok(conn) => {
+                    match record_operation_intent(
+                        &conn,
+                        &ctx.job_id,
+                        track_seq,
+                        std::slice::from_ref(&track.id),
+                    ) {
+                        Ok(id) => id,
+                        Err(e) => {
+                            eprintln!("Failed to record track operation intent: {}", e);
+                            format!("op_track_{}_{}", ctx.chunk_idx, t_idx)
+                        }
+                    }
+                }
+                Err(_) => format!("op_track_{}_{}", ctx.chunk_idx, t_idx),
+            };
+
+            loop {
+                if ctx.control.is_cancelled.load(Ordering::SeqCst) {
+                    break;
+                }
+
+                let start = std::time::Instant::now();
+                let res = ctx
+                    .provider
+                    .add_tracks_to_playlist(&ctx.target_id, std::slice::from_ref(&track.id))
+                    .await;
+                let latency_ms = start.elapsed().as_millis() as u64;
+
+                match res {
+                    Ok(_) => {
+                        if let Ok(conn) = ctx.db.lock() {
+                            let _ = update_operation_outcome(
+                                &conn,
+                                &track_op_id,
+                                OperationOutcome::Confirmed,
+                                track_attempt + 1,
+                                Some("accepted"),
+                            );
+                        }
+                        let succ = ctx.successful_count.fetch_add(1, Ordering::SeqCst) + 1;
+                        let proc = ctx.processed_count.fetch_add(1, Ordering::SeqCst) + 1;
+                        let fail = ctx.failed_count.load(Ordering::SeqCst);
+                        if let Ok(mut ids) = ctx.added_ids.lock() {
+                            ids.push(track.id.clone());
+                        }
+
+                        let progress = TransferProgressPayload {
+                            job_id: ctx.job_id.clone(),
+                            stage: "transferring".to_string(),
+                            processed: proc,
+                            total: ctx.total,
+                            successful: succ,
+                            failed: fail,
+                            current_track: Some(format!(
+                                "{} - {}",
+                                track.title,
+                                track.artists.join(", ")
+                            )),
+                            worker_id: ctx.worker_id,
+                            latency_ms,
+                            http_status: 200,
+                            is_retry: track_attempt > 0,
+                        };
+                        let _ = ctx.app.emit("transfer:progress", progress);
+
+                        let log = TransferLogPayload {
+                            timestamp: chrono::Utc::now().timestamp(),
+                            worker_id: ctx.worker_id,
+                            message: format!("Added '{}' ({}ms)", track.title, latency_ms),
+                            level: "info".to_string(),
+                        };
+                        let _ = ctx.app.emit("transfer:log", log);
+                        break;
+                    }
+                    Err(track_err) => {
+                        let kind = classify_error(&track_err);
+                        if kind == ProviderErrorKind::Timeout {
+                            if let Ok(reconciled) = ctx
+                                .provider
+                                .reconcile_added_tracks(
+                                    &ctx.target_id,
+                                    std::slice::from_ref(&track.id),
+                                )
+                                .await
+                            {
+                                if reconciled == ReconciliationResult::Confirmed {
+                                    if let Ok(conn) = ctx.db.lock() {
+                                        let _ = update_operation_outcome(
+                                            &conn,
+                                            &track_op_id,
+                                            OperationOutcome::Confirmed,
+                                            track_attempt + 1,
+                                            Some("confirmed by read-back"),
+                                        );
+                                    }
+                                    let _succ =
+                                        ctx.successful_count.fetch_add(1, Ordering::SeqCst) + 1;
+                                    let _proc =
+                                        ctx.processed_count.fetch_add(1, Ordering::SeqCst) + 1;
+                                    if let Ok(mut ids) = ctx.added_ids.lock() {
+                                        ids.push(track.id.clone());
+                                    }
+                                    break;
+                                }
+                                if reconciled == ReconciliationResult::Uncertain {
+                                    if let Ok(conn) = ctx.db.lock() {
+                                        let _ = update_operation_outcome(
+                                            &conn,
+                                            &track_op_id,
+                                            OperationOutcome::Ambiguous,
+                                            track_attempt + 1,
+                                            Some(&track_err),
+                                        );
+                                    }
+                                    ctx.failed_count.fetch_add(1, Ordering::SeqCst);
+                                    ctx.processed_count.fetch_add(1, Ordering::SeqCst);
+                                    break;
+                                }
+                            }
+                        }
+
+                        let has_budget = ctx
+                            .retry_budget
+                            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |b| {
+                                if b > 0 {
+                                    Some(b - 1)
+                                } else {
+                                    None
+                                }
+                            })
+                            .is_ok();
+
+                        if is_retryable(kind) && track_attempt < ctx.max_retries && has_budget {
+                            let delay =
+                                retry_delay_ms(track_attempt, None).max(ctx.base_delay_ms);
+                            track_attempt += 1;
+
+                            let log = TransferLogPayload {
+                                timestamp: chrono::Utc::now().timestamp(),
+                                worker_id: ctx.worker_id,
+                                message: format!(
+                                    "Transient error for '{}'. Retrying ({}/{}) in {}ms",
+                                    track.title, track_attempt, ctx.max_retries, delay
+                                ),
+                                level: "warn".to_string(),
+                            };
+                            let _ = ctx.app.emit("transfer:log", log);
+
+                            tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                            continue;
+                        }
+
+                        if let Ok(conn) = ctx.db.lock() {
+                            let outcome = if kind == ProviderErrorKind::Timeout {
+                                OperationOutcome::Ambiguous
+                            } else {
+                                OperationOutcome::Failed
+                            };
+                            let _ = update_operation_outcome(
+                                &conn,
+                                &track_op_id,
+                                outcome,
+                                track_attempt + 1,
+                                Some(&track_err),
+                            );
+                        }
+
+                        let fail = ctx.failed_count.fetch_add(1, Ordering::SeqCst) + 1;
+                        let proc = ctx.processed_count.fetch_add(1, Ordering::SeqCst) + 1;
+                        let succ = ctx.successful_count.load(Ordering::SeqCst);
+
+                        let progress = TransferProgressPayload {
+                            job_id: ctx.job_id.clone(),
+                            stage: "transferring".to_string(),
+                            processed: proc,
+                            total: ctx.total,
+                            successful: succ,
+                            failed: fail,
+                            current_track: Some(format!(
+                                "{} - {}",
+                                track.title,
+                                track.artists.join(", ")
+                            )),
+                            worker_id: ctx.worker_id,
+                            latency_ms,
+                            http_status: if matches!(kind, ProviderErrorKind::RateLimited) {
+                                429
+                            } else {
+                                500
+                            },
+                            is_retry: track_attempt > 0,
+                        };
+                        let _ = ctx.app.emit("transfer:progress", progress);
+
+                        let log = TransferLogPayload {
+                            timestamp: chrono::Utc::now().timestamp(),
+                            worker_id: ctx.worker_id,
+                            message: format!(
+                                "Failed to add '{}': {}",
+                                track.title, track_err
+                            ),
+                            level: "error".to_string(),
+                        };
+                        let _ = ctx.app.emit("transfer:log", log);
+                        break;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -201,12 +698,13 @@ impl TransferWorkerPool {
         };
         let _ = self.app.emit("transfer:log", log);
 
-        // Stage 4: Chunked batch execution with retry and fallback
+        // Stage 4: Chunked batch execution with true Tokio concurrency and retry
         let concurrency = config.concurrency.clamp(1, 8);
-        let mut processed_count = 0usize;
-        let mut successful_count = 0usize;
-        let mut failed_count = 0usize;
-        let mut added_ids = Vec::with_capacity(total);
+        let processed_count = Arc::new(AtomicUsize::new(0));
+        let successful_count = Arc::new(AtomicUsize::new(0));
+        let failed_count = Arc::new(AtomicUsize::new(0));
+        let retry_budget = Arc::new(AtomicU32::new(20));
+        let added_ids = Arc::new(std::sync::Mutex::new(Vec::with_capacity(total)));
 
         // YouTube Music silently truncates multi-action edit_playlist requests
         // after roughly 25 actions. Use one action per request there so an HTTP
@@ -224,15 +722,15 @@ impl TransferWorkerPool {
 
         let base_delay_ms = 1500u64;
         let max_retries = 5;
-        let mut retry_budget = 20u32;
+
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency));
+        let mut join_set = tokio::task::JoinSet::new();
 
         for (chunk_idx, chunk) in chunks.into_iter().enumerate() {
-            // Check cancellation before chunk
             if control.is_cancelled.load(Ordering::SeqCst) {
                 break;
             }
 
-            // Check pause
             while control.is_paused.load(Ordering::SeqCst) {
                 if control.is_cancelled.load(Ordering::SeqCst) {
                     break;
@@ -244,401 +742,58 @@ impl TransferWorkerPool {
                 break;
             }
 
-            let worker_id = (chunk_idx % concurrency) + 1;
-            let chunk_track_ids: Vec<String> = chunk.iter().map(|t| t.id.clone()).collect();
-            let operation_id = {
-                let conn = self.db.lock().map_err(|e| e.to_string())?;
-                record_operation_intent(&conn, &config.job_id, chunk_idx, &chunk_track_ids)?
+            let sem_permit = match semaphore.clone().acquire_owned().await {
+                Ok(permit) => permit,
+                Err(_) => break,
             };
-            let mut attempt = 0;
-            let mut chunk_succeeded = false;
-            let mut chunk_ambiguous = false;
 
-            // Step 4a: Try adding entire chunk in one atomic batch request
-            loop {
-                if control.is_cancelled.load(Ordering::SeqCst) {
-                    break;
-                }
-
-                let start = std::time::Instant::now();
-                let res = provider
-                    .add_tracks_to_playlist(&target_id, &chunk_track_ids)
-                    .await;
-                let latency_ms = start.elapsed().as_millis() as u64;
-
-                match res {
-                    Ok(_) => {
-                        if let Ok(conn) = self.db.lock() {
-                            let _ = update_operation_outcome(
-                                &conn,
-                                &operation_id,
-                                OperationOutcome::Confirmed,
-                                attempt + 1,
-                                Some("accepted"),
-                            );
-                        }
-                        chunk_succeeded = true;
-                        let per_track_latency = (latency_ms / (chunk.len() as u64).max(1)).max(1);
-
-                        for track in &chunk {
-                            successful_count += 1;
-                            processed_count += 1;
-                            added_ids.push(track.id.clone());
-
-                            let progress = TransferProgressPayload {
-                                job_id: config.job_id.clone(),
-                                stage: "transferring".to_string(),
-                                processed: processed_count,
-                                total,
-                                successful: successful_count,
-                                failed: failed_count,
-                                current_track: Some(format!(
-                                    "{} - {}",
-                                    track.title,
-                                    track.artists.join(", ")
-                                )),
-                                worker_id,
-                                latency_ms: per_track_latency,
-                                http_status: 200,
-                                is_retry: attempt > 0,
-                            };
-                            let _ = self.app.emit("transfer:progress", progress);
-
-                            let log = TransferLogPayload {
-                                timestamp: chrono::Utc::now().timestamp(),
-                                worker_id,
-                                message: format!(
-                                    "Added '{}' ({}ms)",
-                                    track.title, per_track_latency
-                                ),
-                                level: "info".to_string(),
-                            };
-                            let _ = self.app.emit("transfer:log", log);
-                        }
-                        chunk_ambiguous = true;
-                        break;
-                    }
-                    Err(err_msg) => {
-                        let kind = classify_error(&err_msg);
-
-                        if kind == ProviderErrorKind::Timeout {
-                            if let Ok(reconciled) = provider
-                                .reconcile_added_tracks(&target_id, &chunk_track_ids)
-                                .await
-                            {
-                                match reconciled {
-                                    ReconciliationResult::Confirmed => {
-                                        if let Ok(conn) = self.db.lock() {
-                                            let _ = update_operation_outcome(
-                                                &conn,
-                                                &operation_id,
-                                                OperationOutcome::Confirmed,
-                                                attempt + 1,
-                                                Some("confirmed by read-back"),
-                                            );
-                                        }
-                                        chunk_succeeded = true;
-                                        for track in &chunk {
-                                            successful_count += 1;
-                                            processed_count += 1;
-                                            added_ids.push(track.id.clone());
-                                        }
-                                        break;
-                                    }
-                                    ReconciliationResult::Uncertain => {
-                                        if let Ok(conn) = self.db.lock() {
-                                            let _ = update_operation_outcome(
-                                                &conn,
-                                                &operation_id,
-                                                OperationOutcome::Ambiguous,
-                                                attempt + 1,
-                                                Some(&err_msg),
-                                            );
-                                        }
-                                        break;
-                                    }
-                                    ReconciliationResult::NotApplied => {}
-                                }
-                            } else {
-                                if let Ok(conn) = self.db.lock() {
-                                    let _ = update_operation_outcome(
-                                        &conn,
-                                        &operation_id,
-                                        OperationOutcome::Ambiguous,
-                                        attempt + 1,
-                                        Some(&err_msg),
-                                    );
-                                }
-                                chunk_ambiguous = true;
-                                break;
-                            }
-                        }
-
-                        if is_retryable(kind) && attempt < max_retries && retry_budget > 0 {
-                            retry_budget -= 1;
-                            let delay = retry_delay_ms(attempt, None).max(base_delay_ms);
-                            attempt += 1;
-
-                            let log =
-                                TransferLogPayload {
-                                    timestamp: chrono::Utc::now().timestamp(),
-                                    worker_id,
-                                    message: format!(
-                                    "Transient error ({}) for batch {}. Retrying ({}/{}) in {}ms",
-                                    err_msg, chunk_idx + 1, attempt, max_retries, delay
-                                ),
-                                    level: "warn".to_string(),
-                                };
-                            let _ = self.app.emit("transfer:log", log);
-
-                            tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-                            continue;
-                        }
-
-                        if let Ok(conn) = self.db.lock() {
-                            let outcome = if kind == ProviderErrorKind::Timeout {
-                                OperationOutcome::Ambiguous
-                            } else {
-                                OperationOutcome::Failed
-                            };
-                            let _ = update_operation_outcome(
-                                &conn,
-                                &operation_id,
-                                outcome,
-                                attempt + 1,
-                                Some(&err_msg),
-                            );
-                        }
-                        // Chunk failed with non-retryable or exceeded retries: fall back to one-by-one
-                        let log = TransferLogPayload {
-                            timestamp: chrono::Utc::now().timestamp(),
-                            worker_id,
-                            message: format!(
-                                "Batch {} failed ({}). Falling back to individual track insertion.",
-                                chunk_idx + 1,
-                                err_msg
-                            ),
-                            level: "warn".to_string(),
-                        };
-                        let _ = self.app.emit("transfer:log", log);
-                        break;
-                    }
-                }
+            if control.is_cancelled.load(Ordering::SeqCst) {
+                drop(sem_permit);
+                break;
             }
 
-            // Step 4b: Fallback to individual track addition if batch request failed
-            if !chunk_succeeded && !chunk_ambiguous && !control.is_cancelled.load(Ordering::SeqCst)
-            {
-                for track in chunk {
-                    if control.is_cancelled.load(Ordering::SeqCst) {
-                        break;
-                    }
+            let worker_id = (chunk_idx % concurrency) + 1;
+            let ctx = ChunkWorkerContext {
+                job_id: config.job_id.clone(),
+                target_id: target_id.clone(),
+                total,
+                chunk_idx,
+                worker_id,
+                chunk,
+                provider: provider.clone(),
+                db: self.db.clone(),
+                app: self.app.clone(),
+                control: control.clone(),
+                processed_count: processed_count.clone(),
+                successful_count: successful_count.clone(),
+                failed_count: failed_count.clone(),
+                retry_budget: retry_budget.clone(),
+                added_ids: added_ids.clone(),
+                base_delay_ms,
+                max_retries,
+                chunk_size,
+            };
 
-                    while control.is_paused.load(Ordering::SeqCst) {
-                        if control.is_cancelled.load(Ordering::SeqCst) {
-                            break;
-                        }
-                        control.pause_notify.notified().await;
-                    }
+            join_set.spawn(async move {
+                let _permit = sem_permit;
+                process_chunk(ctx).await;
+            });
+        }
 
-                    if control.is_cancelled.load(Ordering::SeqCst) {
-                        break;
-                    }
-
-                    let mut track_attempt = 0;
-                    let track_operation_id = {
-                        let conn = self.db.lock().map_err(|e| e.to_string())?;
-                        record_operation_intent(
-                            &conn,
-                            &config.job_id,
-                            chunk_idx * chunk_size + processed_count,
-                            std::slice::from_ref(&track.id),
-                        )?
-                    };
-                    loop {
-                        if control.is_cancelled.load(Ordering::SeqCst) {
-                            break;
-                        }
-
-                        let start = std::time::Instant::now();
-                        let res = provider
-                            .add_tracks_to_playlist(&target_id, std::slice::from_ref(&track.id))
-                            .await;
-                        let latency_ms = start.elapsed().as_millis() as u64;
-
-                        match res {
-                            Ok(_) => {
-                                if let Ok(conn) = self.db.lock() {
-                                    let _ = update_operation_outcome(
-                                        &conn,
-                                        &track_operation_id,
-                                        OperationOutcome::Confirmed,
-                                        track_attempt + 1,
-                                        Some("accepted"),
-                                    );
-                                }
-                                successful_count += 1;
-                                processed_count += 1;
-                                added_ids.push(track.id.clone());
-
-                                let progress = TransferProgressPayload {
-                                    job_id: config.job_id.clone(),
-                                    stage: "transferring".to_string(),
-                                    processed: processed_count,
-                                    total,
-                                    successful: successful_count,
-                                    failed: failed_count,
-                                    current_track: Some(format!(
-                                        "{} - {}",
-                                        track.title,
-                                        track.artists.join(", ")
-                                    )),
-                                    worker_id,
-                                    latency_ms,
-                                    http_status: 200,
-                                    is_retry: track_attempt > 0,
-                                };
-                                let _ = self.app.emit("transfer:progress", progress);
-
-                                let log = TransferLogPayload {
-                                    timestamp: chrono::Utc::now().timestamp(),
-                                    worker_id,
-                                    message: format!("Added '{}' ({}ms)", track.title, latency_ms),
-                                    level: "info".to_string(),
-                                };
-                                let _ = self.app.emit("transfer:log", log);
-                                break;
-                            }
-                            Err(track_err) => {
-                                let kind = classify_error(&track_err);
-                                if kind == ProviderErrorKind::Timeout {
-                                    if let Ok(reconciled) = provider
-                                        .reconcile_added_tracks(
-                                            &target_id,
-                                            std::slice::from_ref(&track.id),
-                                        )
-                                        .await
-                                    {
-                                        if reconciled == ReconciliationResult::Confirmed {
-                                            if let Ok(conn) = self.db.lock() {
-                                                let _ = update_operation_outcome(
-                                                    &conn,
-                                                    &track_operation_id,
-                                                    OperationOutcome::Confirmed,
-                                                    track_attempt + 1,
-                                                    Some("confirmed by read-back"),
-                                                );
-                                            }
-                                            successful_count += 1;
-                                            processed_count += 1;
-                                            added_ids.push(track.id.clone());
-                                            break;
-                                        }
-                                        if reconciled == ReconciliationResult::Uncertain {
-                                            if let Ok(conn) = self.db.lock() {
-                                                let _ = update_operation_outcome(
-                                                    &conn,
-                                                    &track_operation_id,
-                                                    OperationOutcome::Ambiguous,
-                                                    track_attempt + 1,
-                                                    Some(&track_err),
-                                                );
-                                            }
-                                            failed_count += 1;
-                                            processed_count += 1;
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                if is_retryable(kind)
-                                    && track_attempt < max_retries
-                                    && retry_budget > 0
-                                {
-                                    retry_budget -= 1;
-                                    let delay =
-                                        retry_delay_ms(track_attempt, None).max(base_delay_ms);
-                                    track_attempt += 1;
-
-                                    let log = TransferLogPayload {
-                                        timestamp: chrono::Utc::now().timestamp(),
-                                        worker_id,
-                                        message: format!(
-                                            "Transient error for '{}'. Retrying ({}/{}) in {}ms",
-                                            track.title, track_attempt, max_retries, delay
-                                        ),
-                                        level: "warn".to_string(),
-                                    };
-                                    let _ = self.app.emit("transfer:log", log);
-
-                                    tokio::time::sleep(std::time::Duration::from_millis(delay))
-                                        .await;
-                                    continue;
-                                }
-
-                                if let Ok(conn) = self.db.lock() {
-                                    let outcome = if kind == ProviderErrorKind::Timeout {
-                                        OperationOutcome::Ambiguous
-                                    } else {
-                                        OperationOutcome::Failed
-                                    };
-                                    let _ = update_operation_outcome(
-                                        &conn,
-                                        &track_operation_id,
-                                        outcome,
-                                        track_attempt + 1,
-                                        Some(&track_err),
-                                    );
-                                }
-                                // Non-blocking skip after retries per D-05
-                                failed_count += 1;
-                                processed_count += 1;
-
-                                let progress = TransferProgressPayload {
-                                    job_id: config.job_id.clone(),
-                                    stage: "transferring".to_string(),
-                                    processed: processed_count,
-                                    total,
-                                    successful: successful_count,
-                                    failed: failed_count,
-                                    current_track: Some(format!(
-                                        "{} - {}",
-                                        track.title,
-                                        track.artists.join(", ")
-                                    )),
-                                    worker_id,
-                                    latency_ms,
-                                    http_status: if matches!(kind, ProviderErrorKind::RateLimited) {
-                                        429
-                                    } else {
-                                        500
-                                    },
-                                    is_retry: track_attempt > 0,
-                                };
-                                let _ = self.app.emit("transfer:progress", progress);
-
-                                let log = TransferLogPayload {
-                                    timestamp: chrono::Utc::now().timestamp(),
-                                    worker_id,
-                                    message: format!(
-                                        "Failed to add '{}': {}",
-                                        track.title, track_err
-                                    ),
-                                    level: "error".to_string(),
-                                };
-                                let _ = self.app.emit("transfer:log", log);
-                                break;
-                            }
-                        }
-                    }
-                }
+        while let Some(res) = join_set.join_next().await {
+            if let Err(e) = res {
+                eprintln!("Worker task join error: {}", e);
             }
         }
 
         let is_cancelled = control.is_cancelled.load(Ordering::SeqCst);
-        let final_added_ids = added_ids.clone();
-        let total_successful = successful_count;
-        let total_failed = failed_count;
+        let final_added_ids = {
+            let ids = added_ids.lock().unwrap();
+            ids.clone()
+        };
+        let total_successful = successful_count.load(Ordering::SeqCst);
+        let total_failed = failed_count.load(Ordering::SeqCst);
+        let total_processed = processed_count.load(Ordering::SeqCst);
 
         // Update snapshot in SQLite with actually added tracks
         {
@@ -651,7 +806,7 @@ impl TransferWorkerPool {
             let progress = TransferProgressPayload {
                 job_id: config.job_id.clone(),
                 stage: "cancelled".to_string(),
-                processed: processed_count,
+                processed: total_processed,
                 total,
                 successful: total_successful,
                 failed: total_failed,
