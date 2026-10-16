@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { Playlist } from "../../types/provider";
@@ -8,6 +8,7 @@ import { useAuth } from "../../context/AuthContext";
 import {
   Music,
   ArrowRight,
+  ArrowLeftRight,
   RefreshCw,
   Play,
   CheckCircle2,
@@ -17,6 +18,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { ProviderLogo } from "../providers/ProviderLogo";
+import { Button, Card, Badge, SearchInput } from "../ui";
 
 interface PlaylistSelectorProps {
   onMatchComplete: (
@@ -32,7 +34,6 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
 }) => {
   const { ytStatus, spotifyStatus, checkStatus } = useAuth();
 
-
   const [sourceService, setSourceService] = useState<string>("spotify");
   const [targetService, setTargetService] = useState<string>("ytmusic");
 
@@ -40,6 +41,7 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
   const [selectedPlaylist, setSelectedPlaylist] = useState<Playlist | null>(null);
   const [isLoadingPlaylists, setIsLoadingPlaylists] = useState(false);
   const [playlistError, setPlaylistError] = useState<string | null>(null);
+  const [playlistSearch, setPlaylistSearch] = useState("");
 
   // Matching / Ingest Progress State
   const [isProcessing, setIsProcessing] = useState(false);
@@ -47,13 +49,11 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
   const [progressMessage, setProgressMessage] = useState("");
   const [progressPercent, setProgressPercent] = useState(0);
 
-  // Check which services are authenticated
   const isSourceConnected =
     (sourceService === "spotify" ? spotifyStatus : ytStatus) === "connected";
   const isTargetConnected =
     (targetService === "spotify" ? spotifyStatus : ytStatus) === "connected";
 
-  // Load playlists for source service
   const loadPlaylists = async (forceRefresh: boolean = false) => {
     if (!isSourceConnected) {
       setPlaylists([]);
@@ -90,7 +90,6 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
     loadPlaylists(false);
   }, [sourceService, isSourceConnected]);
 
-  // Handle service switch
   const handleSourceChange = (newSource: string) => {
     if (newSource === sourceService) return;
     setSourceService(newSource);
@@ -100,7 +99,15 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
     setPlaylistError(null);
   };
 
-  // Run ingestion and deterministic matching
+  const handleSwapServices = () => {
+    const prevSource = sourceService;
+    setSourceService(targetService);
+    setTargetService(prevSource);
+    setSelectedPlaylist(null);
+    setPlaylists([]);
+    setPlaylistError(null);
+  };
+
   const handleStartMatching = async () => {
     if (!selectedPlaylist || !isSourceConnected || !isTargetConnected) return;
 
@@ -114,7 +121,6 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
     let unlistenMatching: UnlistenFn | null = null;
 
     try {
-      // Listen to streaming ingestion chunks
       unlistenIngest = await listen<{
         playlist_id: string;
         loaded: number;
@@ -127,19 +133,16 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
         setProgressMessage(`Ingested ${loaded} of ${total} tracks...`);
       });
 
-      // Pass 1: Ingest tracks
       await invoke("fetch_playlist_tracks", {
         service: sourceService,
         playlistId: selectedPlaylist.id,
         refresh: false,
       });
 
-      // Pass 2: Matching
       setProgressStage("matching");
       setProgressMessage("Analyzing matches across target catalog...");
       setProgressPercent(50);
 
-      // Listen to streaming matching progress
       unlistenMatching = await listen<MatchingProgressPayload>(
         "matching:progress",
         (event) => {
@@ -164,7 +167,6 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
       setProgressPercent(100);
       setProgressMessage("Matching complete. Loading staging diff...");
 
-      // Small delay for smooth UI transition
       setTimeout(() => {
         onMatchComplete(results, selectedPlaylist, sourceService, targetService);
       }, 300);
@@ -178,198 +180,208 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
     }
   };
 
+  const filteredPlaylists = useMemo(() => {
+    if (!playlistSearch.trim()) return playlists;
+    const query = playlistSearch.toLowerCase();
+    return playlists.filter((p) => p.title.toLowerCase().includes(query));
+  }, [playlists, playlistSearch]);
+
   return (
-    <div className="flex flex-col gap-6 pb-28">
-      {/* Route & Direction Bar */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Source Provider Card */}
-        <div className="bg-[#09090b] border border-[#27272a] rounded-lg p-4">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-              Source Service
-            </span>
-            <span
-              className={`inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full border ${
-                isSourceConnected
-                  ? "bg-emerald-950/60 text-emerald-400 border-emerald-500/30"
-                  : "bg-rose-950/60 text-rose-400 border-rose-500/30"
-              }`}
-            >
-              {isSourceConnected ? (
-                <>
-                  <CheckCircle2 className="w-3 h-3" /> Connected
-                </>
-              ) : (
-                <>
-                  <AlertCircle className="w-3 h-3" /> Disconnected
-                </>
-              )}
-            </span>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={() => handleSourceChange("spotify")}
-              disabled={isProcessing}
-              className={`flex items-center justify-center gap-2 p-2.5 rounded border text-xs font-medium transition-colors cursor-pointer ${
-                sourceService === "spotify"
-                  ? "bg-zinc-800 text-zinc-100 border-zinc-500 shadow-xs"
-                  : "bg-zinc-900/50 text-zinc-400 border-zinc-800 hover:bg-zinc-800/60"
-              }`}
-            >
-              <ProviderLogo provider="spotify" size="sm" />
-              Spotify
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleSourceChange("ytmusic")}
-              disabled={isProcessing}
-              className={`flex items-center justify-center gap-2 p-2.5 rounded border text-xs font-medium transition-colors cursor-pointer ${
-                sourceService === "ytmusic"
-                  ? "bg-zinc-800 text-zinc-100 border-zinc-500 shadow-xs"
-                  : "bg-zinc-900/50 text-zinc-400 border-zinc-800 hover:bg-zinc-800/60"
-              }`}
-            >
-              <ProviderLogo provider="ytmusic" size="sm" />
-              YouTube Music
-            </button>
-          </div>
-        </div>
-
-        {/* Destination Provider Card */}
-        <div className="bg-[#09090b] border border-[#27272a] rounded-lg p-4">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-              Destination Target
-            </span>
-            <span
-              className={`inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full border ${
-                isTargetConnected
-                  ? "bg-emerald-950/60 text-emerald-400 border-emerald-500/30"
-                  : "bg-rose-950/60 text-rose-400 border-rose-500/30"
-              }`}
-            >
-              {isTargetConnected ? (
-                <>
-                  <CheckCircle2 className="w-3 h-3" /> Connected
-                </>
-              ) : (
-                <>
-                  <AlertCircle className="w-3 h-3" /> Disconnected
-                </>
-              )}
-            </span>
-          </div>
-
-          <div className="flex items-center justify-between p-2.5 rounded border bg-zinc-900/50 border-zinc-800 text-xs">
-            <div className="flex items-center gap-2 font-medium text-zinc-200 capitalize">
-              <ProviderLogo
-                provider={targetService === "spotify" ? "spotify" : "ytmusic"}
-                size="sm"
-              />
-              {targetService === "spotify" ? "Spotify" : "YouTube Music"}
+    <div className="flex flex-col gap-5 max-w-[1440px] mx-auto w-full pb-20">
+      {/* Route Selector Card */}
+      <Card className="p-4 bg-[#0a0a0e] border-white/[0.08]">
+        <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
+          {/* Source Selection */}
+          <div className="flex-1 flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-500 font-semibold">
+                Source Catalog
+              </span>
+              <Badge
+                variant={isSourceConnected ? "connected" : "disconnected"}
+                icon={isSourceConnected ? <CheckCircle2 className="w-3 h-3 text-emerald-400" /> : <AlertCircle className="w-3 h-3 text-zinc-500" />}
+              >
+                {isSourceConnected ? "Connected" : "Disconnected"}
+              </Badge>
             </div>
-            <span className="text-[11px] text-zinc-500">Destination target</span>
-          </div>
-        </div>
-      </div>
 
-      {/* Error Banner */}
-      {playlistError && (
-        <div className="p-3.5 bg-rose-950/60 border border-rose-500/40 rounded-lg text-rose-300 text-xs flex items-start gap-2.5">
-          <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <div className="font-medium mb-0.5">Execution Failed</div>
-            <div className="text-rose-400/90 leading-relaxed">{playlistError}</div>
-          </div>
-        </div>
-      )}
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => handleSourceChange("spotify")}
+                disabled={isProcessing}
+                className={`flex items-center justify-center gap-2 p-2.5 rounded-lg border text-xs font-medium transition-all cursor-pointer ${
+                  sourceService === "spotify"
+                    ? "bg-[#181822] text-zinc-100 border-white/[0.2] shadow-sm ring-1 ring-white/[0.1]"
+                    : "bg-[#0f0f14] text-zinc-400 border-white/[0.06] hover:bg-[#14141c]"
+                }`}
+              >
+                <ProviderLogo provider="spotify" size="sm" />
+                <span>Spotify</span>
+              </button>
 
-      {/* Active Processing Modal / Progress Banner */}
-      {isProcessing && (
-        <div className="fixed inset-x-0 bottom-[4.5rem] z-30 px-3 sm:px-5 lg:left-[200px] lg:px-8">
-          <div className="mx-auto max-w-[1440px] rounded-t-lg border border-emerald-500/40 border-b-0 bg-[#09090b]/[.98] p-3 shadow-[0_-10px_28px_rgba(0,0,0,.28)] backdrop-blur-xl">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
-                <span className="text-xs font-semibold text-zinc-200">
-                  {progressStage === "ingesting" ? "Extracting Track Metadata" : "Executing Matching Engine"}
-                </span>
+              <button
+                type="button"
+                onClick={() => handleSourceChange("ytmusic")}
+                disabled={isProcessing}
+                className={`flex items-center justify-center gap-2 p-2.5 rounded-lg border text-xs font-medium transition-all cursor-pointer ${
+                  sourceService === "ytmusic"
+                    ? "bg-[#181822] text-zinc-100 border-white/[0.2] shadow-sm ring-1 ring-white/[0.1]"
+                    : "bg-[#0f0f14] text-zinc-400 border-white/[0.06] hover:bg-[#14141c]"
+                }`}
+              >
+                <ProviderLogo provider="ytmusic" size="sm" />
+                <span>YouTube Music</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Swap Direction Button */}
+          <div className="flex items-center justify-center pt-2 md:pt-4">
+            <button
+              type="button"
+              onClick={handleSwapServices}
+              disabled={isProcessing}
+              className="p-2 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-zinc-400 hover:text-zinc-100 transition-colors cursor-pointer"
+              title="Swap transfer direction"
+              aria-label="Swap transfer direction"
+            >
+              <ArrowLeftRight className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Destination Target */}
+          <div className="flex-1 flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-500 font-semibold">
+                Destination Target
+              </span>
+              <Badge
+                variant={isTargetConnected ? "connected" : "disconnected"}
+                icon={isTargetConnected ? <CheckCircle2 className="w-3 h-3 text-emerald-400" /> : <AlertCircle className="w-3 h-3 text-zinc-500" />}
+              >
+                {isTargetConnected ? "Connected" : "Disconnected"}
+              </Badge>
+            </div>
+
+            <div className="flex items-center justify-between p-2.5 rounded-lg border bg-[#0f0f14] border-white/[0.06] text-xs h-[42px]">
+              <div className="flex items-center gap-2.5 font-medium text-zinc-200 capitalize">
+                <ProviderLogo
+                  provider={targetService === "spotify" ? "spotify" : "ytmusic"}
+                  size="sm"
+                />
+                <span>{targetService === "spotify" ? "Spotify" : "YouTube Music"}</span>
               </div>
-              <span className="text-xs font-mono text-emerald-400">{progressPercent}%</span>
+              <span className="text-[11px] text-zinc-500 font-mono">Target Catalog</span>
             </div>
+          </div>
+        </div>
+      </Card>
 
-            <p className="text-xs text-zinc-400 mb-3">{progressMessage}</p>
-
-            <div className="w-full bg-zinc-900 h-2 rounded-full overflow-hidden border border-zinc-800">
-              <div
-                className="bg-emerald-500 h-full transition-all duration-300 ease-out"
-                style={{ width: `${progressPercent}%` }}
-              />
-            </div>
+      {/* Error Alert */}
+      {playlistError && (
+        <div className="p-3.5 bg-rose-950/40 border border-rose-500/40 rounded-xl text-rose-300 text-xs flex items-start gap-3">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <div className="font-semibold mb-0.5">Operation Notice</div>
+            <div className="text-rose-400/90 leading-relaxed text-[11px]">{playlistError}</div>
           </div>
         </div>
       )}
 
-      {/* Playlist Grid Header */}
-      <div className="flex items-center justify-between">
+      {/* Ingestion & Matching Progress Banner */}
+      {isProcessing && (
+        <Card elevated className="p-4 border-emerald-500/30 bg-[#0e1210]">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
+              <span className="text-xs font-semibold text-zinc-100">
+                {progressStage === "ingesting" ? "Extracting Track Metadata" : "Executing Deterministic Matching"}
+              </span>
+            </div>
+            <span className="text-xs font-mono text-emerald-400 font-semibold tabular-nums">{progressPercent}%</span>
+          </div>
+
+          <p className="text-xs text-zinc-400 mb-3">{progressMessage}</p>
+
+          <div className="w-full bg-black/60 h-2 rounded-full overflow-hidden border border-white/[0.06]">
+            <div
+              className="bg-emerald-500 h-full transition-all duration-300 ease-out"
+              style={{ width: `${progressPercent}%` }}
+            />
+          </div>
+        </Card>
+      )}
+
+      {/* Playlist Grid Header with Search */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
         <div>
           <h3 className="text-sm font-semibold text-zinc-100">Select Playlist to Migrate</h3>
           <p className="text-xs text-zinc-500">
-            Choose a source playlist to inspect metadata and stage deterministic matches.
+            Choose a playlist from {sourceService === "spotify" ? "Spotify" : "YouTube Music"} to stage for transfer.
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => loadPlaylists(true)}
-          disabled={isLoadingPlaylists || isProcessing || !isSourceConnected}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-zinc-900 hover:bg-zinc-800 border border-[#27272a] text-xs text-zinc-300 transition-colors cursor-pointer disabled:opacity-50"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${isLoadingPlaylists ? "animate-spin" : ""}`} />
-          <span>Refresh List</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {isSourceConnected && (
+            <SearchInput
+              value={playlistSearch}
+              onChange={(e) => setPlaylistSearch(e.target.value)}
+              onClear={() => setPlaylistSearch("")}
+              placeholder="Search playlists..."
+              className="w-48 sm:w-56"
+            />
+          )}
+
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => loadPlaylists(true)}
+            disabled={isLoadingPlaylists || isProcessing || !isSourceConnected}
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoadingPlaylists ? "animate-spin" : ""}`} />
+            <span className="hidden sm:inline">Refresh</span>
+          </Button>
+        </div>
       </div>
 
       {/* Not Connected Warning */}
       {!isSourceConnected && (
-        <div className="p-8 border border-dashed border-[#27272a] rounded-lg text-center bg-[#09090b]/50">
-          <Music className="w-8 h-8 text-zinc-600 mx-auto mb-2" />
-          <p className="text-xs text-zinc-400 mb-1">
-            Source account ({sourceService === "spotify" ? "Spotify" : "YouTube Music"}) is not connected.
+        <Card className="p-10 border-dashed border-white/[0.1] text-center bg-[#09090c]/40">
+          <Music className="w-10 h-10 text-zinc-600 mx-auto mb-3" />
+          <p className="text-xs text-zinc-300 font-medium mb-1">
+            {sourceService === "spotify" ? "Spotify" : "YouTube Music"} account is not connected.
           </p>
-          <p className="text-[11px] text-zinc-500">
-            Go to the Accounts tab in the sidebar to authenticate your session.
+          <p className="text-[11px] text-zinc-500 max-w-sm mx-auto">
+            Connect your streaming account using the Accounts button in the sidebar to load your library playlists.
           </p>
-        </div>
+        </Card>
       )}
 
       {/* Playlists Grid */}
       {isSourceConnected && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {isLoadingPlaylists && playlists.length === 0 ? (
-            <div className="col-span-full py-12 flex flex-col items-center justify-center text-zinc-500">
-              <Loader2 className="w-6 h-6 animate-spin mb-2" />
-              <p className="text-xs">Loading playlists from {sourceService}...</p>
+            <div className="col-span-full py-16 flex flex-col items-center justify-center text-zinc-500">
+              <Loader2 className="w-7 h-7 animate-spin mb-3 text-emerald-400" />
+              <p className="text-xs text-zinc-400">Loading playlists from {sourceService}...</p>
             </div>
-          ) : playlists.length === 0 ? (
-            <div className="col-span-full py-12 text-center text-zinc-500">
-              <p className="text-xs">No playlists found for this account.</p>
+          ) : filteredPlaylists.length === 0 ? (
+            <div className="col-span-full py-16 text-center text-zinc-500">
+              <p className="text-xs">No playlists found matching your search.</p>
             </div>
           ) : (
-            playlists.map((playlist) => {
+            filteredPlaylists.map((playlist) => {
               const isSelected = selectedPlaylist?.id === playlist.id;
 
               return (
                 <div
                   key={playlist.id}
                   onClick={() => !isProcessing && setSelectedPlaylist(playlist)}
-                  className={`group relative flex items-center gap-3 p-3 rounded-lg border transition-all cursor-pointer ${
+                  className={`group relative flex items-center gap-3 p-3 rounded-xl border transition-all cursor-pointer ${
                     isSelected
-                      ? "bg-[#121215] border-emerald-500/50 shadow-md ring-1 ring-emerald-500/30"
-                      : "bg-[#09090b] border-[#27272a] hover:border-zinc-700 hover:bg-[#0e0e11]"
+                      ? "bg-[#14141c] border-emerald-500/50 shadow-md ring-1 ring-emerald-500/30"
+                      : "bg-[#0b0b0f] border-white/[0.08] hover:border-white/[0.16] hover:bg-[#101016]"
                   }`}
                 >
                   {/* Playlist Cover Art */}
@@ -377,24 +389,24 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
                     <img
                       src={playlist.cover_url}
                       alt=""
-                      className="w-12 h-12 rounded object-cover flex-shrink-0 bg-zinc-900 border border-zinc-800"
+                      className="w-12 h-12 rounded-lg object-cover shrink-0 bg-zinc-900 border border-white/[0.06]"
                       loading="lazy"
                     />
                   ) : (
-                    <div className="w-12 h-12 rounded bg-zinc-800 border border-zinc-700 flex-shrink-0 flex items-center justify-center text-zinc-500">
+                    <div className="w-12 h-12 rounded-lg bg-zinc-900 border border-white/[0.08] shrink-0 flex items-center justify-center text-zinc-500">
                       <Music className="w-5 h-5" />
                     </div>
                   )}
 
                   {/* Playlist Details */}
                   <div className="min-w-0 flex-1">
-                    <div className="text-xs font-semibold text-zinc-200 truncate group-hover:text-zinc-100">
+                    <div className="text-xs font-semibold text-zinc-100 truncate group-hover:text-emerald-300 transition-colors">
                       {playlist.title}
                     </div>
-                    <div className="text-[11px] text-zinc-500 flex items-center gap-1.5 mt-0.5">
-                      <span>{playlist.track_count} tracks</span>
+                    <div className="text-[11px] text-zinc-500 flex items-center gap-1.5 mt-0.5 font-mono">
+                      <span className="tabular-nums">{playlist.track_count} tracks</span>
                       <span>•</span>
-                      <span className="flex items-center gap-0.5">
+                      <span className="flex items-center gap-1 font-sans">
                         {playlist.is_public ? (
                           <>
                             <Globe className="w-3 h-3 text-zinc-500" /> Public
@@ -410,10 +422,10 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
 
                   {/* Radio check indicator */}
                   <div
-                    className={`w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 ${
+                    className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${
                       isSelected
                         ? "border-emerald-500 bg-emerald-500 text-black"
-                        : "border-zinc-700 bg-zinc-900"
+                        : "border-white/[0.2] bg-black/40"
                     }`}
                   >
                     {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-black" />}
@@ -425,31 +437,33 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
         </div>
       )}
 
-      {/* Action Footer */}
+      {/* Floating Action Footer when Playlist is Selected */}
       {isSourceConnected && (
-        <div className="fixed inset-x-0 bottom-0 z-40 h-[4.5rem] border-t border-emerald-500/20 bg-[#09090b]/[.99] px-3 py-2 shadow-[0_-18px_40px_rgba(0,0,0,.46)] backdrop-blur-xl sm:px-5 lg:left-[200px] lg:px-8">
-          <div className="mx-auto flex h-full max-w-[1440px] items-center justify-between gap-3 rounded-b-lg border border-[#27272a] bg-[#0d0d10] px-3 py-2">
+        <div className="fixed inset-x-0 bottom-0 z-40 h-16 border-t border-white/[0.08] bg-[#08080a]/95 px-4 shadow-[0_-12px_36px_rgba(0,0,0,0.7)] backdrop-blur-xl lg:left-[210px]">
+          <div className="mx-auto flex h-full max-w-[1440px] items-center justify-between gap-4">
             <div className="min-w-0 text-xs text-zinc-400">
               {selectedPlaylist ? (
                 <span className="block truncate">
-                  Selected: <strong className="text-zinc-200">{selectedPlaylist.title}</strong> ({selectedPlaylist.track_count} tracks)
+                  Ready to analyze: <strong className="text-zinc-100 font-semibold">{selectedPlaylist.title}</strong>
+                  <span className="text-zinc-500 font-mono ml-1.5 tabular-nums">({selectedPlaylist.track_count} tracks)</span>
                 </span>
               ) : (
                 <span>Select a playlist to proceed</span>
               )}
             </div>
 
-            <button
-              type="button"
+            <Button
+              variant="primary"
+              size="md"
               onClick={handleStartMatching}
               disabled={!selectedPlaylist || isProcessing || !isTargetConnected}
-              className="inline-flex h-10 shrink-0 items-center gap-2 rounded-md bg-emerald-500 px-4 text-xs font-semibold text-black shadow-md transition hover:-translate-y-px hover:bg-emerald-400 active:translate-y-0 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+              className="shrink-0"
             >
-              <Play className="w-3.5 h-3.5 fill-black" />
+              <Play className="w-3.5 h-3.5 fill-current" />
               <span className="hidden sm:inline">Analyze & Match Playlist</span>
               <span className="sm:hidden">Analyze</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
+              <ArrowRight className="w-3.5 h-3.5 ml-1" />
+            </Button>
           </div>
         </div>
       )}

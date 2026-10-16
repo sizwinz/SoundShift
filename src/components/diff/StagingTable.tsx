@@ -7,7 +7,8 @@ import { FilterToolbar, FilterTab, FilterCounts } from "./FilterToolbar";
 import { DisambiguationDrawer } from "./DisambiguationDrawer";
 import { StagingActionBar } from "./StagingActionBar";
 import { TransferConfirmModal, TransferTargetOptions } from "./TransferConfirmModal";
-import { Music, CheckCircle2 } from "lucide-react";
+import { Music, CheckCircle2, ArrowRight, ArrowLeft } from "lucide-react";
+import { Badge } from "../ui";
 
 interface StagingTableProps {
   results: MatchResult[];
@@ -19,6 +20,7 @@ interface StagingTableProps {
   playlistTitle?: string;
   sourceService?: string;
   targetService?: string;
+  onBackToPlaylists?: () => void;
 }
 
 export const StagingTable: React.FC<StagingTableProps> = ({
@@ -31,14 +33,12 @@ export const StagingTable: React.FC<StagingTableProps> = ({
   playlistTitle,
   sourceService,
   targetService,
+  onBackToPlaylists,
 }) => {
   const parentRef = useRef<HTMLDivElement>(null);
 
-  // Filter & Search state
   const [activeTab, setActiveTab] = useState<FilterTab>("all");
   const [searchQuery, setSearchQuery] = useState("");
-
-  // Drawer state for Amber and Red row disambiguation per DIFF-03, D-05
   const [activeDrawerTrack, setActiveDrawerTrack] = useState<MatchResult | null>(null);
 
   const handleOpenDrawer = (result: MatchResult) => {
@@ -70,9 +70,7 @@ export const StagingTable: React.FC<StagingTableProps> = ({
     setActiveDrawerTrack(null);
   };
 
-  // Internal selection state if not externally controlled
   const [internalSelectedIds, setInternalSelectedIds] = useState<Set<string>>(() => {
-    // Decision D-01: Green (Exact) checked by default; Amber/Red unchecked by default
     const initial = new Set<string>();
     results.forEach((r) => {
       if (r.status === "Exact") {
@@ -92,10 +90,8 @@ export const StagingTable: React.FC<StagingTableProps> = ({
     }
   };
 
-  // Pre-transfer confirmation modal state per D-13
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
 
-  // Batch action 1: Accept All Ambiguous per DIFF-06 and D-12
   const handleAcceptAllAmbiguous = () => {
     const nextSelection = new Set(selectedTrackIds);
     const updated = results.map((r) => {
@@ -124,7 +120,6 @@ export const StagingTable: React.FC<StagingTableProps> = ({
     }
   };
 
-  // Batch action 2: Skip Unresolved per DIFF-06 and D-12
   const handleSkipUnresolved = () => {
     const nextSelection = new Set<string>();
     results.forEach((r) => {
@@ -135,7 +130,6 @@ export const StagingTable: React.FC<StagingTableProps> = ({
     updateSelection(nextSelection);
   };
 
-  // Batch action 3: Deduplicate per D-12
   const handleDeduplicate = () => {
     const nextSelection = new Set(selectedTrackIds);
     duplicateIdSet.forEach((id) => {
@@ -144,7 +138,6 @@ export const StagingTable: React.FC<StagingTableProps> = ({
     updateSelection(nextSelection);
   };
 
-  // Synchronize initial selection if results array changes
   useEffect(() => {
     if (!externalSelectedIds) {
       const initial = new Set<string>();
@@ -157,7 +150,6 @@ export const StagingTable: React.FC<StagingTableProps> = ({
     }
   }, [results, externalSelectedIds]);
 
-  // Identify duplicate track occurrences
   const duplicateIdSet = useMemo(() => {
     const seen = new Set<string>();
     const duplicates = new Set<string>();
@@ -177,7 +169,6 @@ export const StagingTable: React.FC<StagingTableProps> = ({
     return duplicates;
   }, [results]);
 
-  // Compute live filter counts
   const counts: FilterCounts = useMemo(() => {
     let exact = 0;
     let amber = 0;
@@ -203,18 +194,15 @@ export const StagingTable: React.FC<StagingTableProps> = ({
     };
   }, [results, duplicateIdSet]);
 
-  // Apply tab filter & search query
   const filteredResults = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
 
     return results.filter((r) => {
-      // Tab filter
       if (activeTab === "exact" && r.status !== "Exact") return false;
       if (activeTab === "amber" && r.status !== "Ambiguous") return false;
       if (activeTab === "red" && r.status !== "NotFound") return false;
       if (activeTab === "duplicates" && !duplicateIdSet.has(r.source_track.id)) return false;
 
-      // Text search filter
       if (query) {
         const titleMatch = r.source_track.title.toLowerCase().includes(query);
         const artistMatch = r.source_track.artists.some((a) =>
@@ -233,8 +221,6 @@ export const StagingTable: React.FC<StagingTableProps> = ({
     });
   }, [results, activeTab, searchQuery, duplicateIdSet]);
 
-  // Keep row sizing deterministic so large playlists remain smooth while allowing
-  // the row content to breathe on narrow windows.
   const rowVirtualizer = useVirtualizer({
     count: filteredResults.length,
     getScrollElement: () => parentRef.current,
@@ -268,64 +254,166 @@ export const StagingTable: React.FC<StagingTableProps> = ({
   };
 
   return (
-    <div className="flex h-[calc(100dvh-10rem)] min-h-[480px] flex-col overflow-hidden rounded-xl border border-[#27272a] bg-[#050507] shadow-2xl">
-      {/* Header bar */}
-      <div className="flex items-center justify-between px-4 py-3 bg-[#09090b] border-b border-[#27272a]">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded bg-zinc-800 flex items-center justify-center text-zinc-400">
-            <Music className="w-4 h-4" />
-          </div>
-          <div>
-            <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-              <span>{playlistTitle || "Playlist Staging Diff"}</span>
-              <span className="text-xs font-normal text-zinc-500">
-                ({results.length} total tracks)
-              </span>
-            </h2>
-            <div className="text-[11px] text-zinc-500">
-              Source: <span className="capitalize text-zinc-300">{sourceService || "Unknown"}</span>
-              {" -> "}
-              Target: <span className="capitalize text-zinc-300">{targetService || "Unknown"}</span>
+    <div className="flex flex-col flex-1 min-h-0 h-full w-full overflow-hidden bg-[#000000]">
+      {/* Table Header Bar */}
+      <div className="w-full bg-[#0a0a0e] border-b border-white/[0.08] shrink-0">
+        <div className="w-full max-w-[1440px] mx-auto px-4 sm:px-6 py-2.5 flex items-center justify-between">
+          <div className="flex items-center gap-3 min-w-0">
+            {onBackToPlaylists && (
+              <button
+                type="button"
+                onClick={onBackToPlaylists}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-100 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] transition-colors cursor-pointer shrink-0"
+                title="Return to Playlists"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Playlists</span>
+              </button>
+            )}
+            <div className="w-8 h-8 rounded-lg bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-zinc-400 shrink-0">
+              <Music className="w-3.5 h-3.5 text-emerald-400" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2 truncate">
+                <span className="truncate">{playlistTitle || "Playlist Staging Diff"}</span>
+                <span className="text-xs font-mono font-normal text-zinc-500 tabular-nums shrink-0">
+                  ({results.length} total tracks)
+                </span>
+              </h2>
+              <div className="text-[11px] text-zinc-500 flex items-center gap-1.5 mt-0.5">
+                <span>From</span>
+                <span className="capitalize text-zinc-300 font-medium">{sourceService || "Unknown"}</span>
+                <ArrowRight className="w-2.5 h-2.5 text-zinc-600" />
+                <span>To</span>
+                <span className="capitalize text-zinc-300 font-medium">{targetService || "Unknown"}</span>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="flex items-center gap-2">
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-900 border border-[#27272a] text-xs font-mono text-zinc-300">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-            <span>{selectedTrackIds.size} selected</span>
-          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            <Badge variant="connected" icon={<CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}>
+              <span>{selectedTrackIds.size} selected</span>
+            </Badge>
+          </div>
         </div>
       </div>
 
       {/* Filter Toolbar */}
-      <FilterToolbar
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-        searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
-        counts={counts}
-        isAllFilteredSelected={isAllFilteredSelected}
-        onToggleSelectAllFiltered={handleToggleSelectAllFiltered}
-      />
-
-      {/* Column Headers */}
-      <div className="h-8 flex items-center px-4 bg-[#09090b] border-b border-[#18181b] text-[11px] font-medium text-zinc-500 uppercase tracking-wider select-none">
-        <div className="w-7 mr-3"></div>
-        <div className="flex-1">Source Track</div>
-        <div className="w-36 text-center">Match Status</div>
-        <div className="flex-1 text-right">Destination Track</div>
+      <div className="w-full bg-[#09090d] border-b border-white/[0.08] shrink-0">
+        <div className="w-full max-w-[1440px] mx-auto">
+          <FilterToolbar
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            counts={counts}
+            isAllFilteredSelected={isAllFilteredSelected}
+            onToggleSelectAllFiltered={handleToggleSelectAllFiltered}
+          />
+        </div>
       </div>
 
-      {/* Virtualized List Container */}
+      {/* Column Headers */}
+      <div className="w-full bg-[#08080c] border-b border-white/[0.04] shrink-0">
+        <div className="w-full max-w-[1440px] mx-auto px-4 sm:px-6 h-8 flex items-center text-[10px] font-mono font-semibold text-zinc-500 uppercase tracking-wider select-none">
+          <div className="w-7 mr-3"></div>
+          <div className="flex-1">Source Track</div>
+          <div className="w-36 text-center">Match Status</div>
+          <div className="flex-1 text-right">Destination Track</div>
+        </div>
+      </div>
+
+      {/* Virtualized List Container - Full Width so scrollbar is directly against right window edge */}
       <div
         ref={parentRef}
-        className="relative min-h-0 flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent"
+        className="relative min-h-0 flex-1 w-full overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent bg-[#07070a]"
       >
         {filteredResults.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-48 text-zinc-500">
-            <Music className="w-8 h-8 mb-2 opacity-30" />
-            <p className="text-xs">No tracks match current filter criteria</p>
+          <div className="flex flex-col items-center justify-center h-64 text-center px-4">
+            <div className="w-10 h-10 rounded-full bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mb-3 text-zinc-500">
+              <Music className="w-5 h-5 opacity-40" />
+            </div>
+            {searchQuery ? (
+              <>
+                <p className="text-xs font-medium text-zinc-300 mb-1">
+                  No tracks matching &ldquo;{searchQuery}&rdquo;
+                </p>
+                <p className="text-[11px] text-zinc-500 mb-3 max-w-xs">
+                  Try checking for typos or searching by artist name instead.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="px-3 py-1 rounded-md text-xs font-medium bg-white/[0.06] hover:bg-white/[0.1] text-zinc-300 transition-colors cursor-pointer"
+                >
+                  Clear search
+                </button>
+              </>
+            ) : activeTab === "amber" ? (
+              <>
+                <p className="text-xs font-medium text-zinc-300 mb-1">
+                  No Ambiguous Matches Requiring Review
+                </p>
+                <p className="text-[11px] text-zinc-500 mb-3 max-w-xs">
+                  All tracks in this playlist were either matched with high confidence or have no candidates.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("all")}
+                  className="px-3 py-1 rounded-md text-xs font-medium bg-white/[0.06] hover:bg-white/[0.1] text-zinc-300 transition-colors cursor-pointer"
+                >
+                  View All Tracks ({results.length})
+                </button>
+              </>
+            ) : activeTab === "red" ? (
+              <>
+                <p className="text-xs font-medium text-zinc-300 mb-1">
+                  No Unmatched Tracks
+                </p>
+                <p className="text-[11px] text-zinc-500 mb-3 max-w-xs">
+                  Every track in this playlist has matching candidates on the destination service.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("all")}
+                  className="px-3 py-1 rounded-md text-xs font-medium bg-white/[0.06] hover:bg-white/[0.1] text-zinc-300 transition-colors cursor-pointer"
+                >
+                  View All Tracks ({results.length})
+                </button>
+              </>
+            ) : activeTab === "duplicates" ? (
+              <>
+                <p className="text-xs font-medium text-zinc-300 mb-1">
+                  No Duplicate Tracks Found
+                </p>
+                <p className="text-[11px] text-zinc-500 mb-3 max-w-xs">
+                  No recurring ISRC identifiers or duplicate title/artist pairs detected.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("all")}
+                  className="px-3 py-1 rounded-md text-xs font-medium bg-white/[0.06] hover:bg-white/[0.1] text-zinc-300 transition-colors cursor-pointer"
+                >
+                  View All Tracks ({results.length})
+                </button>
+              </>
+            ) : (
+              <>
+                <p className="text-xs font-medium text-zinc-300 mb-1">
+                  No tracks match current filter criteria
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab("all");
+                    setSearchQuery("");
+                  }}
+                  className="px-3 py-1 rounded-md text-xs font-medium bg-white/[0.06] hover:bg-white/[0.1] text-zinc-300 transition-colors cursor-pointer"
+                >
+                  Reset filters
+                </button>
+              </>
+            )}
           </div>
         ) : (
           <div
@@ -352,13 +440,15 @@ export const StagingTable: React.FC<StagingTableProps> = ({
                     transform: `translateY(${virtualRow.start}px)`,
                   }}
                 >
-                  <DiffRow
-                    result={result}
-                    isSelected={isSelected}
-                    isDuplicate={isDuplicate}
-                    onToggleSelect={handleToggleSelect}
-                    onOpenDrawer={handleOpenDrawer}
-                  />
+                  <div className="w-full max-w-[1440px] mx-auto px-4 sm:px-6 h-full">
+                    <DiffRow
+                      result={result}
+                      isSelected={isSelected}
+                      isDuplicate={isDuplicate}
+                      onToggleSelect={handleToggleSelect}
+                      onOpenDrawer={handleOpenDrawer}
+                    />
+                  </div>
                 </div>
               );
             })}
@@ -366,7 +456,7 @@ export const StagingTable: React.FC<StagingTableProps> = ({
         )}
       </div>
 
-      {/* Sticky Bottom Action Bar per DIFF-06, D-11, D-12 */}
+      {/* Sticky Bottom Action Bar */}
       <StagingActionBar
         selectedCount={selectedTrackIds.size}
         totalCount={results.length}
@@ -379,7 +469,7 @@ export const StagingTable: React.FC<StagingTableProps> = ({
         onStartTransfer={() => setIsConfirmModalOpen(true)}
       />
 
-      {/* Disambiguation Drawer for Amber and Red tracks per DIFF-03, DIFF-05, D-05 */}
+      {/* Disambiguation Drawer */}
       <DisambiguationDrawer
         matchResult={activeDrawerTrack}
         targetService={targetService || "ytmusic"}
@@ -388,7 +478,7 @@ export const StagingTable: React.FC<StagingTableProps> = ({
         onResolve={handleResolveCandidate}
       />
 
-      {/* Pre-Transfer Confirmation Modal per D-13, FR-4.1, EXEC-01 */}
+      {/* Pre-Transfer Confirmation Modal */}
       <TransferConfirmModal
         isOpen={isConfirmModalOpen}
         onClose={() => setIsConfirmModalOpen(false)}

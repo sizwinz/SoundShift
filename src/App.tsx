@@ -14,9 +14,11 @@ import { TransferProvider, useTransfer } from "./context/TransferContext";
 import { MatchResult } from "./types/diff";
 import { Playlist } from "./types/provider";
 import { ArrowRight, Music } from "lucide-react";
+import { Modal, Button, Card } from "./components/ui";
 
 function MainContent() {
-  const [activeTab, setActiveTab] = useState<NavTab>("accounts");
+  const [activeTab, setActiveTab] = useState<NavTab>("playlists");
+  const [isAccountsModalOpen, setIsAccountsModalOpen] = useState(false);
   const { ytStatus, spotifyStatus } = useAuth();
   const { startTransfer } = useTransfer();
 
@@ -62,96 +64,108 @@ function MainContent() {
     });
   };
 
+  const getBreadcrumb = () => {
+    switch (activeTab) {
+      case "playlists":
+        return "Playlists";
+      case "transfers":
+        return activePlaylist ? `Review & Diff / ${activePlaylist.title}` : "Review & Diff Staging";
+      case "history":
+        return "Transfer History & Snapshots";
+      case "accounts":
+        return "Streaming Accounts";
+      case "settings":
+        return "Settings & Preferences";
+      default:
+        return undefined;
+    }
+  };
+
   return (
     <div className="flex flex-col min-h-[100dvh] h-screen w-screen bg-[#000000] text-zinc-100 overflow-hidden font-sans relative">
-      {/* Custom Frameless Titlebar */}
-      <Titlebar />
+      {/* Custom Frameless Titlebar with Breadcrumb */}
+      <Titlebar breadcrumb={getBreadcrumb()} />
 
       {/* Main App Layout */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Responsive Collapsible Navigation Sidebar with live provider badges */}
+        {/* Responsive Collapsible Navigation Sidebar with live provider footer */}
         <Sidebar
           activeTab={activeTab}
           onTabChange={setActiveTab}
+          onOpenAccounts={() => setIsAccountsModalOpen(true)}
           ytStatus={ytStatus}
           spotifyStatus={spotifyStatus}
         />
 
-        {/* Content Viewport & Telemetry Drawer Column */}
-        <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden relative">
-          <main className="flex-1 min-w-0 overflow-y-auto bg-[#000000] px-3 py-4 pb-6 sm:px-5 lg:px-8">
-            <div className="w-full max-w-[1440px] mx-auto">
-              {activeTab === "accounts" && <AccountManager />}
+        {/* Content Viewport & Telemetry Column */}
+        <div className="flex-1 flex flex-col min-w-0 min-h-0 h-full overflow-hidden relative">
+          {activeTab === "transfers" && stagedResults.length > 0 ? (
+            <main className="flex-1 min-w-0 min-h-0 overflow-hidden flex flex-col bg-[#000000]">
+              <StagingTable
+                results={stagedResults}
+                onUpdateResults={setStagedResults}
+                onConfirmTransfer={handleConfirmTransfer}
+                playlistTitle={activePlaylist?.title}
+                sourceService={sourceService}
+                targetService={targetService}
+                onBackToPlaylists={() => setActiveTab("playlists")}
+              />
+            </main>
+          ) : (
+            <main className="flex-1 min-w-0 min-h-0 overflow-y-auto bg-[#000000] scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
+              <div className="w-full max-w-[1440px] mx-auto p-4 sm:p-5 lg:p-6">
+                {activeTab === "accounts" && <AccountManager />}
 
-              {activeTab === "playlists" && (
-                <PlaylistSelector onMatchComplete={handleMatchComplete} />
-              )}
+                {activeTab === "playlists" && (
+                  <PlaylistSelector onMatchComplete={handleMatchComplete} />
+                )}
 
-              {activeTab === "transfers" && (
-                stagedResults.length > 0 ? (
-                  <div className="flex flex-col gap-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h1 className="text-lg font-bold text-zinc-100">Review & Diff Staging</h1>
-                        <p className="text-xs text-zinc-500">
-                          Inspect matched tracks, resolve ambiguous candidates, and approve for migration.
-                        </p>
+                {activeTab === "transfers" && (
+                  <div className="min-h-[60vh] flex items-center justify-center">
+                    <Card className="p-12 text-center text-zinc-400 bg-[#09090d]/40 border-dashed border-white/[0.1] max-w-xl mx-auto">
+                      <Music className="w-10 h-10 text-zinc-600 mx-auto mb-3" />
+                      <div className="text-sm font-semibold text-zinc-200 mb-1">
+                        No Playlist Staged for Transfer
                       </div>
-
-                      <button
-                        type="button"
+                      <p className="text-xs text-zinc-500 max-w-sm mx-auto mb-5 leading-relaxed">
+                        Select a playlist and run the matching engine to review exact, ambiguous, and unmatched tracks before syncing.
+                      </p>
+                      <Button
+                        variant="primary"
+                        size="sm"
                         onClick={() => setActiveTab("playlists")}
-                        className="text-xs text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer flex items-center gap-1"
                       >
-                        <span>Choose another playlist</span>
-                        <ArrowRight className="w-3 h-3" />
-                      </button>
-                    </div>
-
-                    <StagingTable
-                      results={stagedResults}
-                      onUpdateResults={setStagedResults}
-                      onConfirmTransfer={handleConfirmTransfer}
-                      playlistTitle={activePlaylist?.title}
-                      sourceService={sourceService}
-                      targetService={targetService}
-                    />
+                        <span>Browse Playlists</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </Button>
+                    </Card>
                   </div>
-                ) : (
-                  <div className="border border-[#27272a] rounded-lg bg-[#09090b] p-8 text-center text-zinc-400">
-                    <Music className="w-10 h-10 text-zinc-600 mx-auto mb-3" />
-                    <div className="text-sm font-medium text-zinc-200 mb-1">
-                      No Playlist Staged for Transfer
-                    </div>
-                    <p className="text-xs text-zinc-500 max-w-sm mx-auto mb-4">
-                      Select a playlist and run the matching engine to review exact, ambiguous, and unmatched tracks before syncing.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab("playlists")}
-                      className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-semibold rounded cursor-pointer transition-colors"
-                    >
-                      <span>Browse Playlists</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                )
-              )}
+                )}
 
-              {activeTab === "history" && (
-                <TransferHistory onBrowsePlaylists={() => setActiveTab("playlists")} />
-              )}
+                {activeTab === "history" && (
+                  <TransferHistory onBrowsePlaylists={() => setActiveTab("playlists")} />
+                )}
 
-              {activeTab === "settings" && (
-                <SettingsPage />
-              )}
-            </div>
-          </main>
+                {activeTab === "settings" && <SettingsPage />}
+              </div>
+            </main>
+          )}
 
-          {/* Global Minimizable Telemetry Drawer contained in content column */}
+          {/* Global Docked Telemetry & Activity Bar */}
           <TelemetryDrawer onNavigateToHistory={() => setActiveTab("history")} />
         </div>
       </div>
+
+      {/* Quick-Access Accounts Modal (accessible anywhere via sidebar) */}
+      <Modal
+        isOpen={isAccountsModalOpen}
+        onClose={() => setIsAccountsModalOpen(false)}
+        title="Streaming Accounts"
+        description="Connect or manage your Spotify and YouTube Music sessions."
+        maxWidth="max-w-2xl"
+      >
+        <AccountManager isModal />
+      </Modal>
     </div>
   );
 }

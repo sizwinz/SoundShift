@@ -13,6 +13,7 @@ import {
 import { TransferHistoryEntry, AuditResult } from "../../types/transfer";
 import { RollbackModal } from "./RollbackModal";
 import { isTauri } from "../../utils/tauri";
+import { Card, Button, Badge } from "../ui";
 
 interface TransferHistoryProps {
   onBrowsePlaylists?: () => void;
@@ -99,100 +100,114 @@ export const TransferHistory: React.FC<TransferHistoryProps> = ({
   const totalRolledBack = history.filter((h) => h.is_rolled_back).length;
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-6 max-w-[1440px] mx-auto w-full pb-16">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between pb-3 border-b border-white/[0.08]">
         <div>
-          <h1 className="text-lg font-bold text-zinc-100 flex items-center gap-2">
-            <History className="w-5 h-5 text-emerald-400" />
+          <h1 className="text-base font-semibold text-zinc-100 flex items-center gap-2">
+            <History className="w-4 h-4 text-emerald-400" />
             <span>Transfer History & Snapshots</span>
           </h1>
-          <p className="text-xs text-zinc-500">
+          <p className="text-xs text-zinc-400 mt-0.5">
             Immutable pre-mutation audit records, 1-click rollback, and post-transfer integrity status.
           </p>
         </div>
 
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="sm"
           onClick={loadHistory}
           disabled={isLoading}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-medium text-zinc-300 hover:text-zinc-100 transition-colors cursor-pointer disabled:opacity-40"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
           <span>Refresh</span>
-        </button>
+        </Button>
       </div>
 
-      {error && <div role="alert" className="rounded border border-rose-500/40 p-3 text-sm text-rose-300">{error}</div>}
-      {recoveryNotice && (
-        <div role="alert" className="rounded border border-amber-500/40 p-3 text-sm text-amber-200">
-          <p>{recoveryNotice}</p>
-          <label className="mt-3 flex items-start gap-2 text-xs">
-            <input type="checkbox" checked={hasReviewedProviders}
-              onChange={(event) => setHasReviewedProviders(event.target.checked)}
-              disabled={isAcknowledging} className="mt-0.5" />
-            <span>I reviewed my provider playlists, including changes after this backup. I understand that previous jobs still require recovery review.</span>
-          </label>
-          <button type="button" onClick={acknowledgeRecovery} disabled={isAcknowledging || !hasReviewedProviders}
-            className="mt-3 rounded border border-amber-400/40 px-3 py-2 text-xs font-medium disabled:opacity-50">
-            {isAcknowledging ? "Saving review..." : "I reviewed my provider playlists"}
-          </button>
+      {error && (
+        <div role="alert" className="rounded-xl border border-rose-500/40 bg-rose-950/20 p-3.5 text-xs text-rose-300">
+          {error}
         </div>
       )}
 
-      {/* Metrics Strip */}
+      {recoveryNotice && (
+        <div role="alert" className="rounded-xl border border-amber-500/40 bg-amber-950/20 p-4 text-xs text-amber-200">
+          <p className="leading-relaxed">{recoveryNotice}</p>
+          <label className="mt-3 flex items-start gap-2.5 text-xs text-zinc-300 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={hasReviewedProviders}
+              onChange={(event) => setHasReviewedProviders(event.target.checked)}
+              disabled={isAcknowledging}
+              className="mt-0.5 rounded border-white/[0.2] bg-zinc-900 accent-amber-500"
+            />
+            <span>I reviewed my provider playlists, including changes after this backup. I understand that previous jobs still require recovery review.</span>
+          </label>
+          <Button
+            variant="amber"
+            size="xs"
+            onClick={acknowledgeRecovery}
+            disabled={isAcknowledging || !hasReviewedProviders}
+            className="mt-3"
+          >
+            {isAcknowledging ? "Saving review..." : "I reviewed my provider playlists"}
+          </Button>
+        </div>
+      )}
+
+      {/* Metrics Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="p-3.5 rounded-lg bg-[#0c0c0e] border border-zinc-800">
-          <div className="text-[10px] uppercase font-mono text-zinc-500">Total Migrations</div>
-          <div className="text-xl font-bold text-zinc-100 font-mono mt-0.5">
+        <Card className="p-4 bg-[#0a0a0e]">
+          <div className="text-[10px] uppercase font-mono tracking-wider text-zinc-500 font-semibold">Total Migrations</div>
+          <div className="text-xl font-bold text-zinc-100 font-mono mt-1 tabular-nums">
             {totalMigrations}
           </div>
-        </div>
+        </Card>
 
-        <div className="p-3.5 rounded-lg bg-[#0c0c0e] border border-zinc-800">
-          <div className="text-[10px] uppercase font-mono text-zinc-500">Songs Transferred</div>
-          <div className="text-xl font-bold text-emerald-400 font-mono mt-0.5">
+        <Card className="p-4 bg-[#0a0a0e]">
+          <div className="text-[10px] uppercase font-mono tracking-wider text-zinc-500 font-semibold">Songs Transferred</div>
+          <div className="text-xl font-bold text-emerald-400 font-mono mt-1 tabular-nums">
             {totalTracks}
           </div>
-        </div>
+        </Card>
 
-        <div className="p-3.5 rounded-lg bg-[#0c0c0e] border border-zinc-800">
-          <div className="text-[10px] uppercase font-mono text-zinc-500">Rolled Back</div>
-          <div className="text-xl font-bold text-amber-400 font-mono mt-0.5">
+        <Card className="p-4 bg-[#0a0a0e]">
+          <div className="text-[10px] uppercase font-mono tracking-wider text-zinc-500 font-semibold">Rolled Back</div>
+          <div className="text-xl font-bold text-amber-400 font-mono mt-1 tabular-nums">
             {totalRolledBack}
           </div>
-        </div>
+        </Card>
 
-        <div className="p-3.5 rounded-lg bg-[#0c0c0e] border border-zinc-800">
-          <div className="text-[10px] uppercase font-mono text-zinc-500">Local Integrity</div>
-          <div className="text-xl font-bold text-emerald-400 font-mono mt-0.5 flex items-center gap-1.5">
+        <Card className="p-4 bg-[#0a0a0e]">
+          <div className="text-[10px] uppercase font-mono tracking-wider text-zinc-500 font-semibold">Local Integrity</div>
+          <div className="text-xl font-bold text-emerald-400 font-mono mt-1 flex items-center gap-1.5">
             <ShieldCheck className="w-5 h-5 text-emerald-400" />
-            <span>Active</span>
+            <span className="font-sans text-sm font-semibold">Active</span>
           </div>
-        </div>
+        </Card>
       </div>
 
       {/* History Items List */}
       {history.length === 0 ? (
-        <div className="border border-[#27272a] rounded-lg bg-[#09090b] p-10 text-center text-zinc-400">
+        <Card className="p-12 text-center text-zinc-400 bg-[#09090d]/40 border-dashed border-white/[0.1]">
           <History className="w-10 h-10 text-zinc-600 mx-auto mb-3" />
-          <div className="text-sm font-medium text-zinc-200 mb-1">
+          <div className="text-sm font-semibold text-zinc-200 mb-1">
             No Migration History Found
           </div>
-          <p className="text-xs text-zinc-500 max-w-sm mx-auto mb-4">
-            Completed transfers will generate local SQLite snapshots allowing instant 1-click rollback.
+          <p className="text-xs text-zinc-500 max-w-sm mx-auto mb-5 leading-relaxed">
+            Completed transfers will generate local SQLite snapshots allowing instant 1-click rollback and integrity audit.
           </p>
           {onBrowsePlaylists && (
-            <button
-              type="button"
+            <Button
+              variant="primary"
+              size="sm"
               onClick={onBrowsePlaylists}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-semibold rounded cursor-pointer transition-colors"
             >
               <span>Browse Playlists</span>
               <ArrowRight className="w-3.5 h-3.5" />
-            </button>
+            </Button>
           )}
-        </div>
+        </Card>
       ) : (
         <div className="space-y-3">
           {history.map((entry) => {
@@ -200,110 +215,104 @@ export const TransferHistory: React.FC<TransferHistoryProps> = ({
             const isAuditing = auditingJobId === entry.job_id;
 
             return (
-              <div
+              <Card
                 key={entry.job_id}
-                className={`p-4 rounded-xl border transition-all ${
+                className={`p-4 transition-all ${
                   entry.is_rolled_back
-                    ? "bg-[#09090b]/60 border-zinc-800/60 opacity-70"
-                    : "bg-[#09090b] border-zinc-800 hover:border-zinc-700"
+                    ? "bg-[#08080c]/50 border-white/[0.04] opacity-75"
+                    : "bg-[#0b0b10] border-white/[0.08] hover:border-white/[0.16]"
                 }`}
               >
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  {/* Left: Info */}
                   <div className="flex items-start gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-lg bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center text-zinc-300 flex-shrink-0 mt-0.5">
-                      <Music className="w-5 h-5" />
+                    <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-zinc-300 shrink-0 mt-0.5">
+                      <Music className="w-4 h-4 text-emerald-400" />
                     </div>
 
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-bold text-zinc-100 truncate">
+                        <span className="text-sm font-semibold text-zinc-100 truncate">
                           {entry.source_playlist_name}
                         </span>
 
-                        {/* Status Badges */}
                         {entry.recovery_required ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-950/50 text-[10px] text-amber-300">
-                            <AlertTriangle className="w-3 h-3" /> Recovery required
-                          </span>
+                          <Badge variant="amber" icon={<AlertTriangle className="w-3 h-3" />}>
+                            Recovery required
+                          </Badge>
                         ) : entry.is_rolled_back ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-[10px] text-zinc-400 font-mono">
-                            <RotateCcw className="w-3 h-3 text-amber-400" />
-                            <span>Rolled Back</span>
-                          </span>
+                          <Badge variant="duplicate" icon={<RotateCcw className="w-3 h-3 text-amber-400" />}>
+                            Rolled Back
+                          </Badge>
                         ) : entry.audit_status?.is_verified ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/30 text-[10px] text-emerald-400 font-medium">
-                            <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                            <span>Audit Verified</span>
-                          </span>
+                          <Badge variant="exact" icon={<ShieldCheck className="w-3 h-3 text-emerald-400" />}>
+                            Audit Verified
+                          </Badge>
                         ) : entry.audit_status ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-950/60 border border-rose-500/30 text-[10px] text-rose-400 font-medium">
-                            <AlertTriangle className="w-3 h-3 text-rose-400" />
-                            <span>Discrepancy</span>
-                          </span>
+                          <Badge variant="unmatched" icon={<AlertTriangle className="w-3 h-3 text-rose-400" />}>
+                            Discrepancy
+                          </Badge>
                         ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-950/40 border border-emerald-500/20 text-[10px] text-emerald-400 font-medium">
-                            <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                            <span>{entry.job_state === "completed_verified" ? "Completed and verified" : entry.job_state.replaceAll("_", " ")}</span>
-                          </span>
+                          <Badge variant="connected" icon={<CheckCircle2 className="w-3 h-3 text-emerald-400" />}>
+                            {entry.job_state === "completed_verified" ? "Completed and verified" : entry.job_state.replaceAll("_", " ")}
+                          </Badge>
                         )}
                       </div>
 
-                      {entry.last_error && <p className="mt-2 text-xs text-amber-300" role="status">{entry.last_error}</p>}
-
-                      {/* Details row */}
-                      <div className="flex items-center gap-3 text-[11px] text-zinc-400 mt-1 flex-wrap">
-                        <span className="capitalize text-zinc-300 font-medium">
-                          {entry.source_service} → {entry.target_service}
-                        </span>
-                        <span>•</span>
-                        <span>{formattedDate}</span>
-                        <span>•</span>
-                        <span className="font-mono text-zinc-300">
-                          {entry.matched_tracks} / {entry.total_tracks} tracks ({entry.added_tracks_count} added)
-                        </span>
+                      <div className="flex items-center gap-2 text-xs text-zinc-400 mt-1 font-mono">
+                        <span className="capitalize">{entry.source_service}</span>
+                        <ArrowRight className="w-3 h-3 text-zinc-600" />
+                        <span className="capitalize">{entry.target_service}</span>
+                        <span className="text-zinc-600">•</span>
+                        <span className="tabular-nums font-semibold text-zinc-200">{entry.matched_tracks} tracks</span>
+                        <span className="text-zinc-600">•</span>
+                        <span className="text-zinc-500 font-sans">{formattedDate}</span>
                       </div>
                     </div>
                   </div>
 
-                  {/* Right: Actions */}
-                  <div className="flex items-center gap-2 self-end sm:self-center flex-shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => handleAudit(entry)}
-                      disabled={isAuditing || entry.is_rolled_back || !entry.target_playlist_id}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-medium text-zinc-300 hover:text-zinc-100 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                      title="Verify destination playlist contents against snapshot records"
-                    >
-                      <ShieldCheck className={`w-3.5 h-3.5 ${isAuditing ? "animate-spin text-emerald-400" : "text-emerald-400"}`} />
-                      <span>{isAuditing ? "Auditing..." : "Audit"}</span>
-                    </button>
+                  <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                    {!entry.is_rolled_back && !entry.recovery_required && (
+                      <Button
+                        variant="secondary"
+                        size="xs"
+                        onClick={() => handleAudit(entry)}
+                        disabled={isAuditing}
+                      >
+                        <RefreshCw className={`w-3 h-3 ${isAuditing ? "animate-spin" : ""}`} />
+                        <span>Audit</span>
+                      </Button>
+                    )}
 
-                    <button
-                      type="button"
-                      onClick={() => setActiveRollbackSnapshot(entry)}
-                      disabled={entry.is_rolled_back || entry.recovery_required || !entry.target_playlist_id}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-rose-950/30 hover:bg-rose-900/40 border border-rose-500/30 text-xs font-medium text-rose-300 hover:text-rose-200 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                      title={entry.is_rolled_back ? "Snapshot already rolled back" : "Rollback added tracks"}
-                    >
-                      <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
-                      <span>Rollback</span>
-                    </button>
+                    {!entry.is_rolled_back && !entry.recovery_required && (
+                      <Button
+                        variant="danger"
+                        size="xs"
+                        onClick={() => setActiveRollbackSnapshot(entry)}
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>Rollback</span>
+                      </Button>
+                    )}
                   </div>
                 </div>
-              </div>
+              </Card>
             );
           })}
         </div>
       )}
 
-      {/* 1-Click Rollback Modal */}
-      <RollbackModal
-        isOpen={Boolean(activeRollbackSnapshot)}
-        onClose={() => setActiveRollbackSnapshot(null)}
-        snapshot={activeRollbackSnapshot}
-        onRollbackSuccess={loadHistory}
-      />
+      {/* Rollback Modal */}
+      {activeRollbackSnapshot && (
+        <RollbackModal
+          isOpen={Boolean(activeRollbackSnapshot)}
+          snapshot={activeRollbackSnapshot}
+          onClose={() => setActiveRollbackSnapshot(null)}
+          onRollbackSuccess={() => {
+            setActiveRollbackSnapshot(null);
+            loadHistory();
+          }}
+        />
+      )}
     </div>
   );
 };

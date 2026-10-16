@@ -2,7 +2,11 @@ import { useState, useEffect } from "react";
 import { isTauri } from "../../utils/tauri";
 import { Minus, Square, Copy, X } from "lucide-react";
 
-export function Titlebar() {
+interface TitlebarProps {
+  breadcrumb?: string;
+}
+
+export function Titlebar({ breadcrumb }: TitlebarProps) {
   const [isMaximized, setIsMaximized] = useState(false);
   const inTauri = isTauri();
 
@@ -74,29 +78,38 @@ export function Titlebar() {
   };
 
   return (
-    <header className="h-9 w-full bg-[#09090b] border-b border-[#27272a] flex items-center justify-between px-3 select-none z-50">
+    <header className="h-9 w-full bg-[#08080a] border-b border-white/[0.08] flex items-center justify-between px-3 select-none z-50 shrink-0">
       <div
         data-tauri-drag-region
-        className="flex items-center gap-2.5 flex-1 h-full cursor-default"
+        className="flex items-center gap-2.5 flex-1 h-full cursor-default overflow-hidden pr-4"
       >
-        <img
-          src="/app-logo.png"
-          alt="SoundShift"
-          className="w-4 h-4 object-contain"
-        />
-        <span className="font-mono text-xs font-bold tracking-widest text-zinc-200">
-          SOUNDSHIFT
-        </span>
-        <span className="text-[10px] font-mono text-zinc-500 bg-[#121215] px-1.5 py-0.5 rounded border border-[#27272a]">
-          v0.9.0-beta
-        </span>
+        <div className="flex items-center gap-2 shrink-0">
+          <img
+            src="/app-logo.png"
+            alt="SoundShift"
+            className="w-4 h-4 object-contain"
+          />
+          <span className="font-mono text-xs font-semibold tracking-wider text-zinc-200">
+            SOUNDSHIFT
+          </span>
+          <span className="text-[10px] font-mono text-zinc-500 bg-white/[0.04] px-1.5 py-0.2 rounded border border-white/[0.08]">
+            v0.9.0
+          </span>
+        </div>
+
+        {breadcrumb && (
+          <div className="flex items-center gap-1.5 text-xs text-zinc-500 truncate ml-2">
+            <span>/</span>
+            <span className="text-zinc-300 font-medium truncate">{breadcrumb}</span>
+          </div>
+        )}
       </div>
 
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-0.5 shrink-0">
         <button
           type="button"
           onClick={handleMinimize}
-          className="p-1 hover:bg-[#18181b] text-zinc-400 hover:text-zinc-200 rounded transition-colors cursor-pointer"
+          className="p-1 hover:bg-white/[0.08] text-zinc-400 hover:text-zinc-200 rounded transition-colors cursor-pointer"
           title="Minimize"
           aria-label="Minimize"
         >
@@ -105,7 +118,7 @@ export function Titlebar() {
         <button
           type="button"
           onClick={handleToggleMaximize}
-          className="p-1 hover:bg-[#18181b] text-zinc-400 hover:text-zinc-200 rounded transition-colors cursor-pointer"
+          className="p-1 hover:bg-white/[0.08] text-zinc-400 hover:text-zinc-200 rounded transition-colors cursor-pointer"
           title={isMaximized ? "Restore" : "Maximize"}
           aria-label={isMaximized ? "Restore" : "Maximize"}
         >
@@ -118,7 +131,7 @@ export function Titlebar() {
         <button
           type="button"
           onClick={handleClose}
-          className="p-1 hover:bg-[#7f1d1d] text-zinc-400 hover:text-red-200 rounded transition-colors cursor-pointer"
+          className="p-1 hover:bg-rose-950/80 hover:text-rose-200 text-zinc-400 rounded transition-colors cursor-pointer"
           title="Close"
           aria-label="Close"
         >

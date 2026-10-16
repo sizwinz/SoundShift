@@ -338,6 +338,16 @@ async fn process_chunk(ctx: ChunkWorkerContext) -> Result<(), String> {
         Ok(true) => {}
         Ok(false) => return Ok(()),
         Err(error) => {
+            let log = TransferLogPayload {
+                job_id: ctx.job_id.clone(),
+                timestamp: chrono::Utc::now().timestamp(),
+                worker_id: ctx.worker_id,
+                message: format!("Track addition failed: {}", error),
+                level: "error".to_string(),
+            };
+            dispatch_transfer_log(log, |payload| {
+                let _ = ctx.app.emit("transfer:log", payload);
+            });
             let _ = ctx.control.fail(&error);
             ctx.failed_count
                 .fetch_add(ctx.chunk.len(), Ordering::SeqCst);
@@ -546,11 +556,8 @@ impl TransferWorkerPool {
             .map(|track| track.id.clone())
             .collect();
 
-        // Deduplication phase for appending to existing playlists
-        let (tracks_to_transfer, skipped_duplicates) = if !config.is_new_playlist
-            && config.skip_duplicates
-            && !pre_existing_tracks.is_empty()
-        {
+        // Deduplication phase: filter duplicate tracks if skip_duplicates is enabled
+        let (tracks_to_transfer, skipped_duplicates) = if config.skip_duplicates {
             let mut deduplicated = Vec::new();
             let mut skipped = 0usize;
             let mut existing_pool = pre_existing_tracks.clone();
@@ -563,8 +570,9 @@ impl TransferWorkerPool {
                         timestamp: chrono::Utc::now().timestamp(),
                         worker_id: 0,
                         message: format!(
-                            "Skipped '{}' (already in destination playlist)",
-                            track.title
+                            "Skipped duplicate track '{}' - {}",
+                            track.title,
+                            track.artists.join(", ")
                         ),
                         level: "info".to_string(),
                     };
@@ -579,7 +587,7 @@ impl TransferWorkerPool {
 
             if skipped > 0 {
                 let log = TransferLogPayload {
-                job_id: config.job_id.clone(),
+                    job_id: config.job_id.clone(),
                     timestamp: chrono::Utc::now().timestamp(),
                     worker_id: 0,
                     message: format!(
@@ -625,11 +633,11 @@ impl TransferWorkerPool {
             tracks_to_transfer.len(),
         )));
 
-        // YouTube Music silently truncates multi-action edit_playlist requests
-        // after roughly 25 actions. Use one action per request there so an HTTP
-        // success cannot leave the remainder of a batch unpersisted.
+        // YouTube Music batches up to ~25 actions per edit_playlist request.
+        // We chunk at 10 tracks to remain safely below truncation limits while avoiding
+        // hundreds of individual HTTP requests that trigger server socket resets.
         let chunk_size = if config.target_service == "ytmusic" {
-            1
+            10
         } else {
             25
         };
@@ -650,6 +658,11 @@ impl TransferWorkerPool {
             control.wait_until_ready().await?;
             if control.is_stopping() {
                 break;
+            }
+
+            #[cfg(not(test))]
+            if chunk_idx > 0 && config.target_service == "ytmusic" {
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
             }
 
             let sem_permit = match semaphore.clone().acquire_owned().await {

@@ -1,5 +1,6 @@
 import React from "react";
-import { Search, CheckSquare, Square } from "lucide-react";
+import { CheckSquare, Square } from "lucide-react";
+import { Badge, SearchInput, BadgeVariant } from "../ui";
 
 export type FilterTab = "all" | "exact" | "amber" | "red" | "duplicates";
 
@@ -30,42 +31,22 @@ export const FilterToolbar: React.FC<FilterToolbarProps> = ({
   isAllFilteredSelected,
   onToggleSelectAllFiltered,
 }) => {
-  const tabs: { id: FilterTab; label: string; count: number; colorClass?: string }[] = [
-    { id: "all", label: "All Tracks", count: counts.all },
-    {
-      id: "exact",
-      label: "Exact",
-      count: counts.exact,
-      colorClass: "text-emerald-400 bg-emerald-950/60 border-emerald-500/30",
-    },
-    {
-      id: "amber",
-      label: "Needs Review",
-      count: counts.amber,
-      colorClass: "text-amber-400 bg-amber-950/60 border-amber-500/30",
-    },
-    {
-      id: "red",
-      label: "Unmatched",
-      count: counts.red,
-      colorClass: "text-rose-400 bg-rose-950/60 border-rose-500/30",
-    },
-    {
-      id: "duplicates",
-      label: "Duplicates",
-      count: counts.duplicates,
-      colorClass: "text-zinc-400 bg-zinc-800 border-zinc-700",
-    },
+  const tabs: { id: FilterTab; label: string; count: number; badgeVariant: BadgeVariant }[] = [
+    { id: "all", label: "All Tracks", count: counts.all, badgeVariant: "neutral" },
+    { id: "exact", label: "Exact", count: counts.exact, badgeVariant: "exact" },
+    { id: "amber", label: "Needs Review", count: counts.amber, badgeVariant: "amber" },
+    { id: "red", label: "Unmatched", count: counts.red, badgeVariant: "unmatched" },
+    { id: "duplicates", label: "Duplicates", count: counts.duplicates, badgeVariant: "duplicate" },
   ];
 
   return (
-    <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 px-4 py-3 bg-[#09090b] border-b border-[#27272a]">
+    <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 px-4 py-2.5 bg-[#09090d] border-b border-white/[0.08]">
       {/* Filter Tabs */}
       <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-0.5">
         <button
           type="button"
           onClick={onToggleSelectAllFiltered}
-          className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs text-zinc-400 hover:text-zinc-200 hover:bg-[#18181b] border border-[#27272a] mr-2 transition-colors cursor-pointer flex-shrink-0"
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.06] border border-white/[0.08] mr-1.5 transition-colors cursor-pointer shrink-0"
           title={isAllFilteredSelected ? "Deselect all visible" : "Select all visible"}
         >
           {isAllFilteredSelected ? (
@@ -73,7 +54,7 @@ export const FilterToolbar: React.FC<FilterToolbarProps> = ({
           ) : (
             <Square className="w-3.5 h-3.5 text-zinc-500" />
           )}
-          <span className="hidden md:inline">Select Visible</span>
+          <span className="hidden md:inline font-medium">Select Visible</span>
         </button>
 
         {tabs.map((tab) => {
@@ -83,36 +64,29 @@ export const FilterToolbar: React.FC<FilterToolbarProps> = ({
               key={tab.id}
               type="button"
               onClick={() => onTabChange(tab.id)}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium transition-colors cursor-pointer flex-shrink-0 border ${
+              className={`flex items-center gap-2 px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer shrink-0 border ${
                 isActive
-                  ? "bg-zinc-800 text-zinc-100 border-zinc-600 shadow-xs"
-                  : "bg-transparent text-zinc-400 hover:text-zinc-200 border-transparent hover:bg-zinc-900"
+                  ? "bg-[#161620] text-zinc-100 border-white/[0.14] shadow-xs"
+                  : "bg-transparent text-zinc-400 hover:text-zinc-200 border-transparent hover:bg-white/[0.04]"
               }`}
             >
               <span>{tab.label}</span>
-              <span
-                className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono border ${
-                  tab.colorClass ?? "bg-zinc-800 text-zinc-400 border-zinc-700"
-                }`}
-              >
+              <Badge variant={tab.badgeVariant} className="px-1.5 py-0 text-[10px]">
                 {tab.count}
-              </span>
+              </Badge>
             </button>
           );
         })}
       </div>
 
       {/* Search Input */}
-      <div className="relative flex-shrink-0 w-full sm:w-64">
-        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500 pointer-events-none" />
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => onSearchChange(e.target.value)}
-          placeholder="Filter tracks by title, artist..."
-          className="w-full bg-[#121215] border border-[#27272a] rounded pl-8 pr-3 py-1 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors"
-        />
-      </div>
+      <SearchInput
+        value={searchQuery}
+        onChange={(e) => onSearchChange(e.target.value)}
+        onClear={() => onSearchChange("")}
+        placeholder="Filter tracks by title, artist..."
+        className="w-full sm:w-64 shrink-0"
+      />
     </div>
   );
 };

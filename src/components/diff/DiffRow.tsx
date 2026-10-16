@@ -2,6 +2,7 @@ import React from "react";
 import { MatchResult } from "../../types/diff";
 import { AudioPlayButton } from "./AudioPlayButton";
 import { ArrowRight, AlertCircle, CheckCircle2, XCircle, Copy } from "lucide-react";
+import { Badge } from "../ui";
 
 interface DiffRowProps {
   result: MatchResult;
@@ -40,10 +41,12 @@ export const DiffRow: React.FC<DiffRowProps> = ({
     switch (status) {
       case "Exact":
         return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-950/60 text-emerald-400 border border-emerald-500/30">
-            <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-            <span>Exact</span>
-          </span>
+          <Badge
+            variant="exact"
+            icon={<CheckCircle2 className="w-3 h-3 text-emerald-400" />}
+          >
+            Exact
+          </Badge>
         );
       case "Ambiguous":
         return (
@@ -53,11 +56,11 @@ export const DiffRow: React.FC<DiffRowProps> = ({
               e.stopPropagation();
               onOpenDrawer?.(result);
             }}
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-amber-950/60 text-amber-400 border border-amber-500/30 hover:bg-amber-900/60 transition-colors cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-950/60 text-amber-400 border border-amber-500/30 hover:bg-amber-900/60 transition-colors cursor-pointer"
             title="Click to resolve ambiguity in drawer"
           >
             <AlertCircle className="w-3 h-3 text-amber-400" />
-            <span>Amber ({formatDelta(deltaMs)})</span>
+            <span className="tabular-nums">Amber ({formatDelta(deltaMs)})</span>
           </button>
         );
       case "NotFound":
@@ -68,7 +71,7 @@ export const DiffRow: React.FC<DiffRowProps> = ({
               e.stopPropagation();
               onOpenDrawer?.(result);
             }}
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-rose-950/60 text-rose-400 border border-rose-500/30 hover:bg-rose-900/60 transition-colors cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-rose-950/60 text-rose-400 border border-rose-500/30 hover:bg-rose-900/60 transition-colors cursor-pointer"
             title="Click to manually find match in drawer"
           >
             <XCircle className="w-3 h-3 text-rose-400" />
@@ -82,17 +85,17 @@ export const DiffRow: React.FC<DiffRowProps> = ({
 
   return (
     <div
-      className={`h-[76px] flex items-center gap-2 px-3 sm:px-4 border-b border-[#18181b] select-none transition-colors ${
-        isSelected ? "bg-[#121215]" : "hover:bg-[#0c0c0e]"
+      className={`h-[76px] flex items-center gap-2 px-3 sm:px-4 border-b border-white/[0.04] select-none transition-colors ${
+        isSelected ? "bg-[#111116]" : "hover:bg-[#0c0c10]"
       }`}
     >
       {/* Checkbox */}
-      <div className="flex items-center mr-1 sm:mr-2">
+      <div className="flex items-center mr-1 sm:mr-2 shrink-0">
         <input
           type="checkbox"
           checked={isSelected}
           onChange={() => onToggleSelect(source_track.id)}
-          className="w-4 h-4 rounded border-zinc-700 bg-zinc-900 text-emerald-500 focus:ring-0 focus:ring-offset-0 cursor-pointer accent-emerald-500"
+          className="w-4 h-4 rounded border-white/[0.2] bg-zinc-900 text-emerald-500 focus:ring-0 focus:ring-offset-0 cursor-pointer accent-emerald-500"
         />
       </div>
 
@@ -102,42 +105,42 @@ export const DiffRow: React.FC<DiffRowProps> = ({
           <img
             src={source_track.thumbnail_url}
             alt=""
-            className="w-8 h-8 sm:w-9 sm:h-9 rounded object-cover flex-shrink-0 bg-zinc-900"
+            className="w-9 h-9 rounded-lg object-cover shrink-0 bg-zinc-900 border border-white/[0.06]"
             loading="lazy"
           />
         ) : (
-          <div className="w-9 h-9 rounded bg-zinc-800 flex-shrink-0 flex items-center justify-center text-[10px] text-zinc-500 font-mono">
+          <div className="w-9 h-9 rounded-lg bg-zinc-900 border border-white/[0.08] shrink-0 flex items-center justify-center text-[10px] text-zinc-500 font-mono">
             N/A
           </div>
         )}
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
-            <span className="text-xs font-medium text-zinc-200 truncate">
+            <span className="text-xs font-semibold text-zinc-200 truncate">
               {source_track.title}
             </span>
             {source_track.is_explicit && (
-              <span className="px-1 py-0.2 rounded bg-zinc-800 text-[9px] font-bold text-zinc-400">
+              <span className="px-1 py-0.2 rounded bg-white/[0.08] text-[9px] font-bold text-zinc-400">
                 E
               </span>
             )}
             {isDuplicate && (
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-zinc-800 text-[10px] text-zinc-400 border border-zinc-700">
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-white/[0.06] text-[10px] text-zinc-400 border border-white/[0.1]">
                 <Copy className="w-2.5 h-2.5" />
                 <span>Dup</span>
               </span>
             )}
           </div>
-          <div className="text-[10px] sm:text-[11px] text-zinc-500 truncate">
-            {source_track.artists.join(", ")}
-            <span className="mx-1 text-zinc-700">-</span>
-            <span>{formatDuration(source_track.duration_ms)}</span>
+          <div className="text-[10px] sm:text-[11px] text-zinc-500 truncate font-mono mt-0.5">
+            <span className="font-sans text-zinc-400">{source_track.artists.join(", ")}</span>
+            <span className="mx-1 text-zinc-600">•</span>
+            <span className="tabular-nums">{formatDuration(source_track.duration_ms)}</span>
           </div>
         </div>
       </div>
 
       {/* Visual Match Arrow & Status Pill */}
-      <div className="flex items-center justify-center px-1 sm:px-4 flex-shrink-0 gap-1.5 sm:gap-2">
+      <div className="flex items-center justify-center px-1 sm:px-4 shrink-0 gap-1.5 sm:gap-2">
         <ArrowRight className="w-3.5 h-3.5 text-zinc-600 hidden sm:block" />
         {renderStatusBadge()}
       </div>
@@ -148,19 +151,19 @@ export const DiffRow: React.FC<DiffRowProps> = ({
           {matched_track ? (
             <>
               <div className="flex items-center justify-end gap-1.5">
-                <span className="text-xs font-medium text-zinc-200 truncate">
+                <span className="text-xs font-semibold text-zinc-200 truncate">
                   {matched_track.title}
                 </span>
                 {matched_track.is_explicit && (
-                  <span className="px-1 py-0.2 rounded bg-zinc-800 text-[9px] font-bold text-zinc-400">
+                  <span className="px-1 py-0.2 rounded bg-white/[0.08] text-[9px] font-bold text-zinc-400">
                     E
                   </span>
                 )}
               </div>
-              <div className="text-[11px] text-zinc-500 truncate">
-                {matched_track.artists.join(", ")}
-                <span className="mx-1 text-zinc-700">-</span>
-                <span>{formatDuration(matched_track.duration_ms)}</span>
+              <div className="text-[11px] text-zinc-500 truncate font-mono mt-0.5">
+                <span className="font-sans text-zinc-400">{matched_track.artists.join(", ")}</span>
+                <span className="mx-1 text-zinc-600">•</span>
+                <span className="tabular-nums">{formatDuration(matched_track.duration_ms)}</span>
               </div>
             </>
           ) : (
@@ -172,17 +175,17 @@ export const DiffRow: React.FC<DiffRowProps> = ({
           <img
             src={matched_track.thumbnail_url}
             alt=""
-            className="w-8 h-8 sm:w-9 sm:h-9 rounded object-cover flex-shrink-0 bg-zinc-900"
+            className="w-9 h-9 rounded-lg object-cover shrink-0 bg-zinc-900 border border-white/[0.06]"
             loading="lazy"
           />
         ) : (
-          <div className="w-9 h-9 rounded bg-zinc-900 flex-shrink-0 flex items-center justify-center text-[10px] text-zinc-700 font-mono">
+          <div className="w-9 h-9 rounded-lg bg-zinc-900 border border-white/[0.08] shrink-0 flex items-center justify-center text-[10px] text-zinc-700 font-mono">
             {matched_track ? "N/A" : "-"}
           </div>
         )}
 
-        {/* In-App Audio Preview per DIFF-04 */}
-        <div className="flex-shrink-0">
+        {/* Audio Preview */}
+        <div className="shrink-0">
           <AudioPlayButton track={matched_track ?? source_track} size="sm" />
         </div>
       </div>

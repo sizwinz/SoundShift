@@ -49,9 +49,10 @@ impl YouTubeMusicProvider {
 
         Self {
             client: reqwest::Client::builder()
-                .connect_timeout(std::time::Duration::from_secs(8))
-                .timeout(std::time::Duration::from_secs(15))
-                .pool_idle_timeout(std::time::Duration::from_secs(90))
+                .connect_timeout(std::time::Duration::from_secs(12))
+                .timeout(std::time::Duration::from_secs(30))
+                .tcp_keepalive(std::time::Duration::from_secs(30))
+                .pool_idle_timeout(std::time::Duration::from_secs(60))
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
             cookie_str,
@@ -598,7 +599,8 @@ impl MusicProvider for YouTubeMusicProvider {
             .map(|id| {
                 json!({
                     "action": "ACTION_ADD_VIDEO",
-                    "addedVideoId": id
+                    "addedVideoId": id,
+                    "dedupeOption": "DEDUPE_OPTION_SKIP"
                 })
             })
             .collect();
@@ -619,7 +621,20 @@ impl MusicProvider for YouTubeMusicProvider {
             .map_err(|e| format!("InnerTube edit_playlist failed: {}", e))?;
 
         if !res.status().is_success() {
-            return Err(format!("Add tracks failed with status: {}", res.status()));
+            let status = res.status();
+            let body_text = res.text().await.unwrap_or_default();
+            return Err(format!("Add tracks failed with status {}: {}", status, body_text));
+        }
+
+        let json: Value = res
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse edit_playlist response: {}", e))?;
+
+        if let Some(status) = json.get("status").and_then(|s| s.as_str()) {
+            if status == "STATUS_FAILED" {
+                return Err("YouTube Music rejected playlist mutation with STATUS_FAILED".to_string());
+            }
         }
 
         Ok(())

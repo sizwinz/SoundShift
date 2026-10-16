@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import type { ReactNode } from "react";
 import {
   Check,
   Database,
@@ -10,6 +9,7 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
+import { Card, Button } from "../ui";
 
 const SETTINGS_KEY = "soundshift.settings";
 
@@ -64,31 +64,47 @@ export function SettingsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-[1120px] pb-12">
-      <div className="mb-6">
-        <h1 className="text-lg font-bold text-zinc-100">Settings</h1>
-        <p className="mt-1 text-xs text-zinc-500">
-          Control transfer behavior and local app preferences. Nothing leaves this device.
-        </p>
+    <div className="mx-auto max-w-[1120px] pb-16 w-full">
+      <div className="mb-6 pb-3 border-b border-white/[0.08] flex items-center justify-between">
+        <div>
+          <h1 className="text-base font-semibold text-zinc-100 flex items-center gap-2">
+            <SlidersHorizontal className="w-4 h-4 text-emerald-400" />
+            <span>Settings & Preferences</span>
+          </h1>
+          <p className="mt-0.5 text-xs text-zinc-400">
+            Control transfer concurrency and local client preferences. All configuration is strictly local.
+          </p>
+        </div>
+
+        {saved && (
+          <span className="inline-flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 px-2.5 py-1 rounded-full animate-in fade-in">
+            <Check className="w-3.5 h-3.5" />
+            <span>Saved</span>
+          </span>
+        )}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
-        <div className="space-y-4">
-          <section className="rounded-xl border border-[#27272a] bg-[#09090b]">
-            <div className="flex items-start gap-3 border-b border-[#27272a] px-5 py-4">
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="space-y-5">
+          {/* Performance Section */}
+          <Card className="overflow-hidden">
+            <div className="flex items-start gap-3 border-b border-white/[0.06] px-5 py-4 bg-[#0e0e13]/50">
               <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-2 text-emerald-400">
                 <Gauge className="h-4 w-4" />
               </div>
               <div>
-                <h2 className="text-sm font-semibold text-zinc-100">Transfer performance</h2>
-                <p className="mt-1 text-xs text-zinc-500">Tune how many provider requests can run at once.</p>
+                <h2 className="text-sm font-semibold text-zinc-100">Transfer Performance</h2>
+                <p className="mt-0.5 text-xs text-zinc-400">Tune how many provider network requests execute in parallel.</p>
               </div>
             </div>
+
             <div className="space-y-5 px-5 py-5">
               <label className="block">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="font-medium text-zinc-200">Concurrent workers</span>
-                  <span className="rounded bg-zinc-800 px-2 py-1 font-mono text-emerald-400">{settings.concurrency}</span>
+                  <span className="font-medium text-zinc-200">Concurrent Workers</span>
+                  <span className="rounded-md bg-white/[0.06] border border-white/[0.08] px-2.5 py-0.5 font-mono text-emerald-400 tabular-nums">
+                    {settings.concurrency} workers
+                  </span>
                 </div>
                 <input
                   type="range"
@@ -99,105 +115,168 @@ export function SettingsPage() {
                   className="mt-3 h-1.5 w-full cursor-pointer accent-emerald-500"
                   aria-label="Concurrent workers"
                 />
-                <div className="mt-2 flex justify-between text-[10px] text-zinc-600">
-                  <span>Safer, slower</span><span>1</span><span>8</span><span>Faster</span>
+                <div className="mt-2 flex justify-between text-[11px] font-mono text-zinc-500">
+                  <span>1 (safest)</span>
+                  <span>4 (recommended)</span>
+                  <span>8 (fastest)</span>
                 </div>
-                <p className="mt-2 text-[11px] text-zinc-500">
-                  Note: YouTube Music destinations automatically serialize to 1 worker to prevent 409 Conflict collisions.
-                </p>
               </label>
+
               <SettingToggle
-                icon={<ShieldCheck className="h-4 w-4" />}
-                title="Confirm before every transfer"
-                description="Keep the destination and snapshot review step enabled."
+                title="Pre-transfer confirmation modal"
+                description="Show the target playlist destination selector and batch review screen before dispatching tasks."
                 checked={settings.confirmBeforeTransfer}
-                onChange={(value) => update("confirmBeforeTransfer", value)}
+                onChange={(checked) => update("confirmBeforeTransfer", checked)}
+              />
+
+              <SettingToggle
+                title="Preserve live transfer logs"
+                description="Keep streaming log events in memory during transfers to allow detailed console telemetry inspection."
+                checked={settings.keepTransferLogs}
+                onChange={(checked) => update("keepTransferLogs", checked)}
               />
             </div>
-          </section>
+          </Card>
 
-          <section className="rounded-xl border border-[#27272a] bg-[#09090b]">
-            <div className="flex items-start gap-3 border-b border-[#27272a] px-5 py-4">
-              <div className="rounded-lg border border-sky-500/20 bg-sky-500/10 p-2 text-sky-400">
-                <SlidersHorizontal className="h-4 w-4" />
+          {/* Interface Section */}
+          <Card className="overflow-hidden">
+            <div className="flex items-start gap-3 border-b border-white/[0.06] px-5 py-4 bg-[#0e0e13]/50">
+              <div className="rounded-lg border border-white/[0.1] bg-white/[0.04] p-2 text-zinc-300">
+                <Sparkles className="h-4 w-4" />
               </div>
               <div>
-                <h2 className="text-sm font-semibold text-zinc-100">Interface</h2>
-                <p className="mt-1 text-xs text-zinc-500">Adjust feedback and motion without changing transfer results.</p>
+                <h2 className="text-sm font-semibold text-zinc-100">User Interface & Motion</h2>
+                <p className="mt-0.5 text-xs text-zinc-400">Accessibility and desktop animation preferences.</p>
               </div>
             </div>
-            <div className="space-y-1 px-5 py-4">
+
+            <div className="space-y-4 px-5 py-5">
               <SettingToggle
-                icon={<Sparkles className="h-4 w-4" />}
-                title="Reduce interface motion"
-                description="Use fewer animated transitions and status effects."
+                title="Reduce motion"
+                description="Disable sliding drawer transitions and pulse animations for high performance or motion sensitivity."
                 checked={settings.reducedMotion}
-                onChange={(value) => update("reducedMotion", value)}
-              />
-              <SettingToggle
-                icon={<Database className="h-4 w-4" />}
-                title="Keep transfer logs"
-                description="Retain recent transfer activity in the local session."
-                checked={settings.keepTransferLogs}
-                onChange={(value) => update("keepTransferLogs", value)}
+                onChange={(checked) => update("reducedMotion", checked)}
               />
             </div>
-          </section>
+          </Card>
+
+          {/* Storage Actions */}
+          <Card className="overflow-hidden">
+            <div className="flex items-start gap-3 border-b border-white/[0.06] px-5 py-4 bg-[#0e0e13]/50">
+              <div className="rounded-lg border border-white/[0.1] bg-white/[0.04] p-2 text-zinc-300">
+                <Database className="h-4 w-4" />
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold text-zinc-100">Storage & Reset</h2>
+                <p className="mt-0.5 text-xs text-zinc-400">Manage client cache and reset local preferences.</p>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-xs font-semibold text-zinc-200">Reset default preferences</div>
+                <p className="mt-0.5 text-xs text-zinc-400">Restore worker concurrency and interface options to initial defaults.</p>
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={reset}
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                <span>Reset Defaults</span>
+              </Button>
+            </div>
+
+            <div className="border-t border-white/[0.06] px-5 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-xs font-semibold text-rose-300">Clear cached transfer preferences</div>
+                <p className="mt-0.5 text-xs text-zinc-400">Clears locally memorized playlist targets without modifying OS credentials or snapshots.</p>
+              </div>
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={clearLocalData}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>Clear Cache</span>
+              </Button>
+            </div>
+          </Card>
         </div>
 
-        <aside className="h-fit rounded-xl border border-[#27272a] bg-[#09090b] p-5">
-          <div className="flex items-center gap-2 text-sm font-semibold text-zinc-100">
-            <ShieldCheck className="h-4 w-4 text-emerald-400" />
-            Local-first privacy
-          </div>
-          <p className="mt-3 text-xs leading-relaxed text-zinc-500">
-            Preferences, credentials, snapshots, and transfer history stay on this machine. SoundShift does not use telemetry.
-          </p>
-          <div className="mt-5 space-y-2 border-t border-[#27272a] pt-4 text-[11px] text-zinc-500">
-            <div className="flex justify-between"><span>Storage</span><span className="text-zinc-300">Local</span></div>
-            <div className="flex justify-between"><span>Workers</span><span className="text-zinc-300">1 to 8</span></div>
-            <div className="flex justify-between"><span>Network</span><span className="text-zinc-300">Provider only</span></div>
-          </div>
-          <div className="mt-5 space-y-2">
-            <button type="button" onClick={reset} className="flex w-full items-center justify-center gap-2 rounded-md border border-zinc-800 px-3 py-2 text-xs text-zinc-300 transition hover:border-zinc-700 hover:bg-zinc-900">
-              <RotateCcw className="h-3.5 w-3.5" /> Reset preferences
-            </button>
-            <button type="button" onClick={clearLocalData} className="flex w-full items-center justify-center gap-2 rounded-md border border-rose-500/20 px-3 py-2 text-xs text-rose-300 transition hover:bg-rose-500/10">
-              <Trash2 className="h-3.5 w-3.5" /> Clear local preferences
-            </button>
-          </div>
-          <div className={`mt-4 flex items-center justify-center gap-1.5 text-[11px] text-emerald-400 transition-opacity ${saved ? "opacity-100" : "opacity-0"}`}>
-            <Check className="h-3.5 w-3.5" /> Saved locally
-          </div>
-        </aside>
+        {/* Sidebar Info Card */}
+        <div className="space-y-4">
+          <Card className="p-5 space-y-3 bg-[#0d0d12]">
+            <div className="flex items-center gap-2 text-emerald-400">
+              <ShieldCheck className="h-4 w-4" />
+              <span className="text-xs font-semibold">Local-First Architecture</span>
+            </div>
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              SoundShift does not use remote analytics, external telemetry servers, or cloud databases. All session keys are anchored to your local OS keychain.
+            </p>
+          </Card>
+
+          <Card className="p-5 space-y-3 font-mono text-xs">
+            <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-semibold font-sans">
+              System Specifications
+            </span>
+            <div className="space-y-1.5 text-zinc-300 tabular-nums">
+              <div className="flex justify-between">
+                <span className="text-zinc-500 font-sans">Client Core:</span>
+                <span>Tauri v2 + Rust</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-500 font-sans">Database:</span>
+                <span>Embedded SQLite (WAL)</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-500 font-sans">Typography:</span>
+                <span>Inter (Offline TTF)</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-500 font-sans">Version:</span>
+                <span>0.9.0-beta</span>
+              </div>
+            </div>
+          </Card>
+        </div>
       </div>
     </div>
   );
 }
 
 function SettingToggle({
-  icon,
   title,
   description,
   checked,
   onChange,
 }: {
-  icon: ReactNode;
   title: string;
   description: string;
   checked: boolean;
-  onChange: (value: boolean) => void;
+  onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="flex cursor-pointer items-center justify-between gap-4 rounded-lg px-2 py-3 transition hover:bg-zinc-900/70">
-      <span className="flex min-w-0 items-start gap-3">
-        <span className="mt-0.5 text-zinc-500">{icon}</span>
-        <span className="min-w-0">
-          <span className="block text-xs font-medium text-zinc-200">{title}</span>
-          <span className="mt-1 block text-[11px] leading-relaxed text-zinc-500">{description}</span>
-        </span>
-      </span>
-      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="h-4 w-4 shrink-0 accent-emerald-500" />
+    <label className="flex items-start justify-between gap-4 cursor-pointer py-1">
+      <div className="min-w-0 flex-1">
+        <div className="text-xs font-semibold text-zinc-200">{title}</div>
+        <div className="mt-0.5 text-xs text-zinc-400 leading-relaxed">{description}</div>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        onClick={() => onChange(!checked)}
+        className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none cursor-pointer mt-0.5 ${
+          checked ? "bg-emerald-500" : "bg-white/[0.12]"
+        }`}
+      >
+        <span
+          className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+            checked ? "translate-x-4 bg-zinc-950" : "translate-x-0 bg-zinc-300"
+          }`}
+        />
+      </button>
     </label>
   );
 }
