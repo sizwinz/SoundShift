@@ -96,7 +96,7 @@ Pre-built installers for Windows, macOS, and Linux will be available on the [Rel
 ### Build from Source
 
 #### Prerequisites
-- **Node.js** (v18+) and **npm**
+- **Node.js** (v22.12+; v24 recommended) and **npm**
 - **Rust** (stable toolchain, 1.80+)
 - Platform build dependencies (MSVC on Windows, Xcode tools on macOS, WebKitGTK on Linux)
 

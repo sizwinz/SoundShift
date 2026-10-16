@@ -163,41 +163,43 @@ pub async fn match_track(
         }
     }
 
-    // Pass 2: Direct ISRC Query (MTCH-02)
-    if let Some(ref isrc) = source.isrc {
-        if !isrc.trim().is_empty() {
-            let query = format!("isrc:{}", isrc.trim());
-            if let Ok(_permit) = rate_limiter.acquire().await {
-                if let Ok(isrc_results) = provider.search_track(&query).await {
-                    for candidate in isrc_results {
-                        let delta_ms = if source.duration_ms > 0 && candidate.duration_ms > 0 {
-                            (candidate.duration_ms as i64 - source.duration_ms as i64)
-                                .unsigned_abs()
-                        } else {
-                            0
-                        };
+    // Pass 2: Direct ISRC Query (MTCH-02) - only if target provider supports ISRC indexing
+    if provider.supports_isrc_search() {
+        if let Some(ref isrc) = source.isrc {
+            if !isrc.trim().is_empty() {
+                let query = format!("isrc:{}", isrc.trim());
+                if let Ok(_permit) = rate_limiter.acquire().await {
+                    if let Ok(isrc_results) = provider.search_track(&query).await {
+                        for candidate in isrc_results {
+                            let delta_ms = if source.duration_ms > 0 && candidate.duration_ms > 0 {
+                                (candidate.duration_ms as i64 - source.duration_ms as i64)
+                                    .unsigned_abs()
+                            } else {
+                                0
+                            };
 
-                        // ISRC match verified with duration check (delta <= 15s)
-                        if delta_ms <= 15_000 {
-                            if let Some(db_mutex) = db {
-                                if let Ok(conn) = db_mutex.lock() {
-                                    let _ = conn.execute(
+                            // ISRC match verified with duration check (delta <= 15s)
+                            if delta_ms <= 15_000 {
+                                if let Some(db_mutex) = db {
+                                    if let Ok(conn) = db_mutex.lock() {
+                                        let _ = conn.execute(
                                         "INSERT OR REPLACE INTO track_match_cache 
                                          (source_service, source_track_id, target_service, target_track_id, match_method, confidence, created_at) 
                                          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                                         params![source_service, source.id, target_service, candidate.id, "isrc", 1.0, now],
                                     );
+                                    }
                                 }
-                            }
 
-                            return MatchResult {
-                                source_track: source.clone(),
-                                status: MatchClassification::Exact,
-                                matched_track: Some(candidate),
-                                candidates: Vec::new(),
-                                confidence: 1.0,
-                                match_method: Some("isrc".to_string()),
-                            };
+                                return MatchResult {
+                                    source_track: source.clone(),
+                                    status: MatchClassification::Exact,
+                                    matched_track: Some(candidate),
+                                    candidates: Vec::new(),
+                                    confidence: 1.0,
+                                    match_method: Some("isrc".to_string()),
+                                };
+                            }
                         }
                     }
                 }

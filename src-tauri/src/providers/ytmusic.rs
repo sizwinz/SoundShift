@@ -49,6 +49,9 @@ impl YouTubeMusicProvider {
 
         Self {
             client: reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(8))
+                .timeout(std::time::Duration::from_secs(15))
+                .pool_idle_timeout(std::time::Duration::from_secs(90))
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
             cookie_str,
@@ -721,17 +724,20 @@ mod tests {
             if let Ok(Some(token)) =
                 crate::auth::keyring_store::retrieve_credential("ytmusic", &conn)
             {
-                println!("FOUND YTMUSIC TOKEN (len={})", token.len());
+                crate::diagnostics::write_error(&format!(
+                    "FOUND YTMUSIC TOKEN (len={})",
+                    token.len()
+                ));
                 let provider = YouTubeMusicProvider::new(token);
 
                 let playlists = provider
                     .list_playlists()
                     .await
                     .expect("Failed to list playlists");
-                println!("FOUND {} PLAYLISTS", playlists.len());
+                crate::diagnostics::write_error(&format!("FOUND {} PLAYLISTS", playlists.len()));
                 assert!(!playlists.is_empty(), "Expected at least 1 playlist");
             } else {
-                println!("NO YTMUSIC CREDENTIAL IN DB!");
+                crate::diagnostics::write_error(&format!("NO YTMUSIC CREDENTIAL IN DB!"));
             }
         }
     }

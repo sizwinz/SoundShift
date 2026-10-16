@@ -105,25 +105,37 @@ pub async fn open_auth_window(app: tauri::AppHandle, service: String) -> Result<
 
                 if let Some(token) = captured_token {
                     // Persist credential into OS Keyring with AES-256 fallback (AUTH-04, D-03)
-                    if let Some(state) = app_handle.try_state::<crate::AppState>() {
+                    let store_res = if let Some(state) = app_handle.try_state::<crate::AppState>() {
                         if let Ok(conn) = state.db.lock() {
-                            if let Err(e) = crate::auth::keyring_store::store_credential(
-                                &service_id,
-                                &token,
-                                &conn,
-                            ) {
-                                eprintln!("Failed to store credential for {}: {}", service_id, e);
-                            }
+                            crate::auth::keyring_store::store_credential(&service_id, &token, &conn)
+                        } else {
+                            Err("Database lock unavailable".to_string())
+                        }
+                    } else {
+                        Err("Application state unavailable".to_string())
+                    };
+
+                    match store_res {
+                        Ok(()) => {
+                            let payload = serde_json::json!({
+                                "service": service_id,
+                                "status": "connected"
+                            });
+                            let _ = app_handle.emit("auth:status_changed", payload);
+                        }
+                        Err(e) => {
+                            crate::diagnostics::write_error(&format!(
+                                "Failed to store credential for {}: {}",
+                                service_id, e
+                            ));
+                            let payload = serde_json::json!({
+                                "service": service_id,
+                                "status": "disconnected",
+                                "error": crate::diagnostics::sanitize_for_log(&format!("Failed to persist credentials: {}", e))
+                            });
+                            let _ = app_handle.emit("auth:status_changed", payload);
                         }
                     }
-
-                    // Credential detected: notify frontend with payload per D-02
-                    let payload = serde_json::json!({
-                        "service": service_id,
-                        "status": "connected"
-                    });
-
-                    let _ = app_handle.emit("auth:status_changed", payload);
 
                     // Auto-close popup window immediately per D-01/D-02
                     let _ = w.close();

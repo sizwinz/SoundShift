@@ -1,6 +1,5 @@
 use rusqlite::{Connection, OptionalExtension, Result};
 use std::collections::HashSet;
-use std::path::Path;
 
 pub const CURRENT_SCHEMA_VERSION: i64 = 1;
 
@@ -64,6 +63,8 @@ fn ensure_indexes(conn: &Connection) -> Result<()> {
         "INTEGER NOT NULL DEFAULT 0",
     )?;
     ensure_column(conn, "transfer_jobs", "last_error", "TEXT")?;
+    ensure_column(conn, "transfer_jobs", "manifest_json", "TEXT")?;
+    ensure_column(conn, "transfer_operations", "payload_json", "TEXT")?;
     ensure_column(
         conn,
         "transfer_snapshots",
@@ -82,23 +83,12 @@ fn ensure_indexes(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-pub fn init_db(app_dir: &Path) -> Result<Connection> {
-    std::fs::create_dir_all(app_dir).map_err(|e| {
-        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
-    })?;
-
-    let db_path = app_dir.join("soundshift.db");
-    let conn = Connection::open(db_path)?;
-
-    conn.pragma_update(None, "journal_mode", "WAL")?;
-    conn.pragma_update(None, "synchronous", "NORMAL")?;
-    conn.pragma_update(None, "foreign_keys", "ON")?;
-
-    create_tables(&conn)?;
-    run_migrations(&conn)?;
-
-    Ok(conn)
-}
+// Retain the existing public entry points while keeping filesystem recovery separate
+// from schema definitions and migrations.
+pub use super::recovery::{
+    create_database_backup, create_database_backup_if_needed, init_db,
+    quarantine_corrupted_database, restore_latest_backup, verify_backup_integrity,
+};
 
 pub fn run_migrations(conn: &Connection) -> Result<()> {
     conn.execute(
@@ -387,5 +377,84 @@ mod tests {
             )
             .expect("updated_at should be queryable");
         assert_eq!(updated_at_exists, 1);
+    }
+
+    #[test]
+    fn test_create_and_verify_database_backup() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("soundshift_test_{}", rand::random::<u32>()));
+        std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+
+        let db_path = temp_dir.join("soundshift.db");
+        let conn = Connection::open(&db_path).expect("open db");
+        create_tables(&conn).expect("create tables");
+        run_migrations(&conn).expect("run migrations");
+
+        // Insert test data
+        conn.execute(
+            "INSERT INTO transfer_jobs (job_id, source_service, target_service, source_playlist_name, target_playlist_id, target_playlist_name, total_tracks, matched_tracks, job_state, created_at, updated_at)
+             VALUES ('j_backup_1', 'spotify', 'ytmusic', 'My List', 'PL_1', 'My List', 5, 5, 'completed_verified', 100, 100)",
+            [],
+        ).expect("insert test job");
+
+        let record = create_database_backup(&conn, &temp_dir).expect("create backup");
+        assert_eq!(record.status, "verified");
+
+        let is_valid = verify_backup_integrity(
+            std::path::Path::new(&record.database_path),
+            &record.checksum,
+        )
+        .expect("verify backup integrity");
+        assert!(is_valid);
+
+        // Verify invalid checksum returns false
+        let is_invalid = verify_backup_integrity(
+            std::path::Path::new(&record.database_path),
+            "invalid_checksum",
+        )
+        .expect("verify invalid checksum");
+        assert!(!is_invalid);
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_quarantine_and_restore_workflow() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "soundshift_quarantine_test_{}",
+            rand::random::<u32>()
+        ));
+        std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+
+        let db_path = temp_dir.join("soundshift.db");
+        let conn = Connection::open(&db_path).expect("open db");
+        create_tables(&conn).expect("create tables");
+        run_migrations(&conn).expect("run migrations");
+
+        // Create a verified backup first
+        let _ = create_database_backup(&conn, &temp_dir).expect("create backup");
+        drop(conn);
+
+        // Quarantine the database file as if corrupted
+        let quarantined =
+            quarantine_corrupted_database(&temp_dir, "Test corruption").expect("quarantine");
+        assert!(std::path::Path::new(&quarantined).exists());
+        assert!(!db_path.exists());
+
+        // Restore latest backup
+        let restored = restore_latest_backup(&temp_dir).expect("restore");
+        assert!(std::path::Path::new(&restored).exists());
+        assert!(db_path.exists());
+
+        // Verify restored db can be opened and queried
+        let restored_conn = Connection::open(&db_path).expect("open restored db");
+        let check: String = restored_conn
+            .query_row("PRAGMA integrity_check", [], |r| r.get(0))
+            .expect("check restored");
+        assert_eq!(check, "ok");
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

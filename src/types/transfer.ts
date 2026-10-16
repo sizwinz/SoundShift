@@ -4,10 +4,19 @@ export type TransferStage =
   | "idle"
   | "starting"
   | "transferring"
+  | "pausing"
   | "paused"
+  | "cancelling"
+  | "recovery_required"
   | "completed"
   | "cancelled"
   | "failed";
+
+export interface LifecycleUpdate {
+  job_id: string;
+  state: "starting" | "running" | "pausing" | "paused" | "cancelling" | "cancelled" | "completed_verified" | "recovery_required";
+  event_seq: number;
+}
 
 export interface TransferProgressPayload {
   job_id: string;
@@ -24,6 +33,7 @@ export interface TransferProgressPayload {
 }
 
 export interface TransferLogPayload {
+  job_id: string;
   timestamp: number;
   worker_id: number;
   message: string;
@@ -60,6 +70,8 @@ export interface BatchTransferSummary {
   skipped_duplicates?: number;
   is_cancelled: boolean;
   audit: AuditResult | null;
+  state: LifecycleUpdate["state"];
+  event_seq: number;
 }
 
 export interface TransferHistoryEntry {
@@ -77,4 +89,7 @@ export interface TransferHistoryEntry {
   is_rolled_back: boolean;
   created_at: number;
   audit_status?: AuditResult | null;
+  job_state: string;
+  recovery_required: boolean;
+  last_error: string | null;
 }

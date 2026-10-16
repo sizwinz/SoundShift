@@ -143,10 +143,15 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
       unlistenMatching = await listen<MatchingProgressPayload>(
         "matching:progress",
         (event) => {
-          const { processed, total } = event.payload;
+          const { processed, total, current_track, current_result } = event.payload;
           const pct = 50 + Math.round((processed / Math.max(total, 1)) * 48);
           setProgressPercent(pct);
-          setProgressMessage(`Matching track ${processed} of ${total}...`);
+          const trackTitle = current_track || current_result?.source_track?.title;
+          if (trackTitle) {
+            setProgressMessage(`Matching "${trackTitle}" (${processed} of ${total})...`);
+          } else {
+            setProgressMessage(`Matching track ${processed} of ${total}...`);
+          }
         }
       );
 

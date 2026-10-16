@@ -21,7 +21,9 @@ SoundShift is engineered from the ground up as a strictly local-first desktop ap
   - **Windows**: Windows Credential Manager via the OS Data Protection API.
   - **macOS**: Keychain Services.
   - **Linux**: Freedesktop Secret Service / KWallet.
-- If native OS keyring access is unavailable, credentials fall back to an AES-256-GCM encrypted envelope bound to a host-derived machine key.
+- On Windows, if native keyring access is unavailable, credentials are protected with Windows DPAPI under the current OS user.
+- On macOS and Linux, the OS keychain or secret service must be available and unlocked. SoundShift refuses to save new credentials to a weaker fallback.
+- Older credential envelopes are read only for migration into OS-protected storage. Migration failures are reported and do not silently enable a weaker storage path.
 - Tokens and session cookies are never written to plaintext log files.
 
 ### 4. Local SQLite Persistence

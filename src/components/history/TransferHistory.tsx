@@ -23,22 +23,31 @@ export const TransferHistory: React.FC<TransferHistoryProps> = ({
 }) => {
   const [history, setHistory] = useState<TransferHistoryEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null);
+  const [isAcknowledging, setIsAcknowledging] = useState(false);
+  const [hasReviewedProviders, setHasReviewedProviders] = useState(false);
   const [activeRollbackSnapshot, setActiveRollbackSnapshot] =
     useState<TransferHistoryEntry | null>(null);
   const [auditingJobId, setAuditingJobId] = useState<string | null>(null);
 
   const loadHistory = useCallback(async () => {
     setIsLoading(true);
+    setError(null);
     if (!isTauri()) {
       setIsLoading(false);
       return;
     }
 
     try {
-      const entries = await invoke<TransferHistoryEntry[]>("get_transfer_history");
+      const [entries, notice] = await Promise.all([
+        invoke<TransferHistoryEntry[]>("get_transfer_history"),
+        invoke<string | null>("get_storage_recovery_notice"),
+      ]);
       setHistory(entries);
+      setRecoveryNotice(notice);
     } catch (err) {
-      console.error("Failed to load transfer history:", err);
+      setError(String(err));
     } finally {
       setIsLoading(false);
     }
@@ -48,13 +57,29 @@ export const TransferHistory: React.FC<TransferHistoryProps> = ({
     loadHistory();
   }, [loadHistory]);
 
+  const acknowledgeRecovery = async () => {
+    if (!hasReviewedProviders) return;
+    setIsAcknowledging(true);
+    try {
+      await invoke("acknowledge_storage_recovery", { reviewed: hasReviewedProviders });
+      setHasReviewedProviders(false);
+      await loadHistory();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setIsAcknowledging(false);
+    }
+  };
+
   const handleAudit = async (entry: TransferHistoryEntry) => {
     setAuditingJobId(entry.job_id);
+    setError(null);
     try {
       const result = await invoke<AuditResult>("audit_playlist_integrity", {
         targetService: entry.target_service,
         targetPlaylistId: entry.target_playlist_id,
-        expectedTrackIds: [], // Provider will check existence
+        expectedTrackIds: [],
+        snapshotId: entry.snapshot_id,
       });
 
       setHistory((prev) =>
@@ -63,7 +88,7 @@ export const TransferHistory: React.FC<TransferHistoryProps> = ({
         )
       );
     } catch (err) {
-      console.error("Audit failed:", err);
+      setError(String(err));
     } finally {
       setAuditingJobId(null);
     }
@@ -97,6 +122,23 @@ export const TransferHistory: React.FC<TransferHistoryProps> = ({
           <span>Refresh</span>
         </button>
       </div>
+
+      {error && <div role="alert" className="rounded border border-rose-500/40 p-3 text-sm text-rose-300">{error}</div>}
+      {recoveryNotice && (
+        <div role="alert" className="rounded border border-amber-500/40 p-3 text-sm text-amber-200">
+          <p>{recoveryNotice}</p>
+          <label className="mt-3 flex items-start gap-2 text-xs">
+            <input type="checkbox" checked={hasReviewedProviders}
+              onChange={(event) => setHasReviewedProviders(event.target.checked)}
+              disabled={isAcknowledging} className="mt-0.5" />
+            <span>I reviewed my provider playlists, including changes after this backup. I understand that previous jobs still require recovery review.</span>
+          </label>
+          <button type="button" onClick={acknowledgeRecovery} disabled={isAcknowledging || !hasReviewedProviders}
+            className="mt-3 rounded border border-amber-400/40 px-3 py-2 text-xs font-medium disabled:opacity-50">
+            {isAcknowledging ? "Saving review..." : "I reviewed my provider playlists"}
+          </button>
+        </div>
+      )}
 
       {/* Metrics Strip */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -180,7 +222,11 @@ export const TransferHistory: React.FC<TransferHistoryProps> = ({
                         </span>
 
                         {/* Status Badges */}
-                        {entry.is_rolled_back ? (
+                        {entry.recovery_required ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-950/50 text-[10px] text-amber-300">
+                            <AlertTriangle className="w-3 h-3" /> Recovery required
+                          </span>
+                        ) : entry.is_rolled_back ? (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-[10px] text-zinc-400 font-mono">
                             <RotateCcw className="w-3 h-3 text-amber-400" />
                             <span>Rolled Back</span>
@@ -198,10 +244,12 @@ export const TransferHistory: React.FC<TransferHistoryProps> = ({
                         ) : (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-950/40 border border-emerald-500/20 text-[10px] text-emerald-400 font-medium">
                             <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                            <span>Completed</span>
+                            <span>{entry.job_state === "completed_verified" ? "Completed and verified" : entry.job_state.replaceAll("_", " ")}</span>
                           </span>
                         )}
                       </div>
+
+                      {entry.last_error && <p className="mt-2 text-xs text-amber-300" role="status">{entry.last_error}</p>}
 
                       {/* Details row */}
                       <div className="flex items-center gap-3 text-[11px] text-zinc-400 mt-1 flex-wrap">
@@ -223,7 +271,7 @@ export const TransferHistory: React.FC<TransferHistoryProps> = ({
                     <button
                       type="button"
                       onClick={() => handleAudit(entry)}
-                      disabled={isAuditing || entry.is_rolled_back}
+                      disabled={isAuditing || entry.is_rolled_back || !entry.target_playlist_id}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-medium text-zinc-300 hover:text-zinc-100 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                       title="Verify destination playlist contents against snapshot records"
                     >
@@ -234,7 +282,7 @@ export const TransferHistory: React.FC<TransferHistoryProps> = ({
                     <button
                       type="button"
                       onClick={() => setActiveRollbackSnapshot(entry)}
-                      disabled={entry.is_rolled_back}
+                      disabled={entry.is_rolled_back || entry.recovery_required || !entry.target_playlist_id}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-rose-950/30 hover:bg-rose-900/40 border border-rose-500/30 text-xs font-medium text-rose-300 hover:text-rose-200 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                       title={entry.is_rolled_back ? "Snapshot already rolled back" : "Rollback added tracks"}
                     >

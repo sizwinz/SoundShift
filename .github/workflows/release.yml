@@ -7,7 +7,51 @@ on:
   workflow_dispatch:
 
 jobs:
+  verify:
+    name: Pre-release Verification Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install NPM Dependencies
+        run: npm ci
+
+      - name: Run Frontend Tests
+        run: npm test
+
+      - name: Run Frontend Build
+        run: npm run build
+
+      - name: Run Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+
+      - name: Run Rust Tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
   build-and-release:
+    name: Build & Publish Release
+    needs: verify
     permissions:
       contents: write
     strategy:
@@ -28,7 +72,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install Rust stable
@@ -66,5 +110,5 @@ jobs:
             - Destination playlist deduplication and merge picker.
             - Multi-threaded Tokio concurrency engine with single-writer safety for YouTube Music.
           releaseDraft: false
-          prerelease: false
+          prerelease: true
           args: ${{ matrix.args }}

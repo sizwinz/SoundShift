@@ -7,7 +7,6 @@ import {
   XSquare,
   ShieldCheck,
   AlertTriangle,
-  RotateCcw,
   Terminal,
   Activity,
   ListMusic,
@@ -29,6 +28,7 @@ export const TelemetryDrawer: React.FC<TelemetryDrawerProps> = ({
     auditResult,
     summary,
     error,
+    controlPending,
     trackEvents,
     isDrawerOpen,
     isDrawerExpanded,
@@ -37,7 +37,6 @@ export const TelemetryDrawer: React.FC<TelemetryDrawerProps> = ({
     pauseTransfer,
     resumeTransfer,
     cancelTransfer,
-    retryFailedTracks,
     resetTransfer,
   } = useTransfer();
 
@@ -54,7 +53,8 @@ export const TelemetryDrawer: React.FC<TelemetryDrawerProps> = ({
   const isPaused = stage === "paused";
   const isCompleted = stage === "completed";
   const isCancelled = stage === "cancelled";
-  const isFailed = stage === "failed";
+  const isFailed = stage === "failed" || stage === "recovery_required";
+  const isPending = stage === "pausing" || stage === "cancelling";
   const isFinished = isCompleted || isCancelled || isFailed;
 
   const handleCancelClick = () => {
@@ -114,7 +114,7 @@ export const TelemetryDrawer: React.FC<TelemetryDrawerProps> = ({
               }`}
             />
             <span className="text-xs font-bold text-zinc-100 uppercase tracking-wider font-mono">
-              {stage}
+              {stage.replaceAll("_", " ")}
             </span>
           </div>
 
@@ -122,7 +122,9 @@ export const TelemetryDrawer: React.FC<TelemetryDrawerProps> = ({
 
           {/* Current track or summary */}
           <div className="text-xs text-zinc-400 truncate max-w-xs sm:max-w-md">
-            {progress?.current_track ? (
+            {isPending ? (
+              <span className="text-amber-300">Waiting for in-flight requests and checkpoints...</span>
+            ) : progress?.current_track ? (
               <span className="text-zinc-200">{progress.current_track}</span>
             ) : isCompleted ? (
               <span className="text-emerald-400 font-medium">Migration successfully completed</span>
@@ -152,6 +154,7 @@ export const TelemetryDrawer: React.FC<TelemetryDrawerProps> = ({
                 <button
                   type="button"
                   onClick={resumeTransfer}
+                  disabled={controlPending || isPending}
                   className="flex items-center gap-1 px-2.5 py-1 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/30 text-xs font-medium transition-colors cursor-pointer"
                   title="Resume Transfer"
                 >
@@ -162,6 +165,7 @@ export const TelemetryDrawer: React.FC<TelemetryDrawerProps> = ({
                 <button
                   type="button"
                   onClick={pauseTransfer}
+                  disabled={controlPending || isPending || stage === "starting"}
                   className="flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 text-xs font-medium transition-colors cursor-pointer"
                   title="Pause Transfer"
                 >
@@ -173,6 +177,7 @@ export const TelemetryDrawer: React.FC<TelemetryDrawerProps> = ({
               <button
                 type="button"
                 onClick={handleCancelClick}
+                disabled={controlPending || stage === "cancelling" || stage === "starting"}
                 className="flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-900 hover:bg-rose-950/40 text-zinc-400 hover:text-rose-400 border border-zinc-800 text-xs font-medium transition-colors cursor-pointer"
                 title="Cancel Transfer"
               >
@@ -202,9 +207,9 @@ export const TelemetryDrawer: React.FC<TelemetryDrawerProps> = ({
       {/* Expanded Console View */}
       {isDrawerExpanded && (
         <div className="flex-1 flex flex-col min-h-0 bg-[#09090b]">
-          {isFailed && error && (
-            <div className="mx-4 mt-3 rounded-lg border border-rose-500/30 bg-rose-950/30 px-3 py-2 text-sm text-rose-200">
-              <div className="font-semibold">Transfer failed</div>
+          {error && (
+            <div role="alert" className="mx-4 mt-3 rounded-lg border border-rose-500/30 bg-rose-950/30 px-3 py-2 text-sm text-rose-200">
+              <div className="font-semibold">{stage === "recovery_required" ? "Recovery required" : isFailed ? "Transfer failed" : "Control request failed"}</div>
               <div className="mt-1 break-words text-rose-300/90">{error}</div>
             </div>
           )}
@@ -351,18 +356,6 @@ export const TelemetryDrawer: React.FC<TelemetryDrawerProps> = ({
               </div>
 
               <div className="flex items-center gap-2">
-                {/* Retry Failed Tracks per D-05 */}
-                {summary && summary.failed_tracks > 0 && (
-                  <button
-                    type="button"
-                    onClick={retryFailedTracks}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-amber-500 hover:bg-amber-400 text-black font-semibold text-xs transition-colors cursor-pointer"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    <span>Retry Failed Tracks ({summary.failed_tracks})</span>
-                  </button>
-                )}
-
                 {onNavigateToHistory && (
                   <button
                     type="button"
@@ -400,7 +393,7 @@ export const TelemetryDrawer: React.FC<TelemetryDrawerProps> = ({
             </div>
 
             <p className="text-xs text-zinc-400 leading-relaxed">
-              New track processing will stop immediately. Songs already transferred ({progress?.successful ?? 0} tracks) will remain on the destination playlist, and you can roll them back at any time from the Transfer History view.
+              New track processing will stop immediately. Songs already transferred ({progress?.successful ?? 0} tracks) will remain on the destination playlist. In-flight requests must settle before cancellation completes. Review recorded outcomes in Transfer History before recovery.
             </p>
 
             <div className="flex items-center justify-end gap-2 pt-2">

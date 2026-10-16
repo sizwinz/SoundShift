@@ -22,4 +22,5 @@ export interface MatchingProgressPayload {
   processed: number;
   total: number;
   current_result: MatchResult;
+  current_track?: string;
 }

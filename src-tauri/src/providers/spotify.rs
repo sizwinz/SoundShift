@@ -17,6 +17,9 @@ impl SpotifyProvider {
     pub fn new(sp_dc: String) -> Self {
         Self {
             client: reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(8))
+                .timeout(std::time::Duration::from_secs(15))
+                .pool_idle_timeout(std::time::Duration::from_secs(90))
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
             sp_dc,
@@ -105,11 +108,8 @@ impl SpotifyProvider {
             if status == reqwest::StatusCode::UNAUTHORIZED {
                 self.invalidate_access_token().await;
             }
-            let body = res.text().await.unwrap_or_default();
-            return Err(format!(
-                "Spotify token exchange error ({}): {}",
-                status, body
-            ));
+
+            return Err(format!("Spotify token exchange error ({})", status));
         }
 
         let json: Value = res
@@ -202,10 +202,10 @@ impl SpotifyProvider {
             if status == reqwest::StatusCode::UNAUTHORIZED {
                 self.invalidate_access_token().await;
             }
-            let body = res.text().await.unwrap_or_default();
+
             return Err(format!(
-                "Spotify Pathfinder error ({}) status {}: {}",
-                operation, status, body
+                "Spotify Pathfinder error ({}) status {}",
+                operation, status
             ));
         }
 
@@ -220,8 +220,10 @@ impl SpotifyProvider {
             if !errors.is_null() {
                 if let Some(err_arr) = errors.as_array() {
                     if !err_arr.is_empty() {
-                        let msg = err_arr[0]["message"].as_str().unwrap_or("GraphQL error");
-                        return Err(format!("Spotify Pathfinder error ({}): {}", operation, msg));
+                        return Err(format!(
+                            "Spotify Pathfinder GraphQL response rejected ({})",
+                            operation
+                        ));
                     }
                 }
             }
@@ -378,6 +380,10 @@ impl SpotifyProvider {
 
 #[async_trait]
 impl MusicProvider for SpotifyProvider {
+    fn supports_isrc_search(&self) -> bool {
+        true
+    }
+
     async fn list_playlists(&self) -> Result<Vec<Playlist>, String> {
         let mut playlists = Vec::new();
         let mut seen_playlist_ids = std::collections::HashSet::new();
@@ -864,11 +870,8 @@ impl MusicProvider for SpotifyProvider {
 
             if !res.status().is_success() {
                 let status = res.status();
-                let text = res.text().await.unwrap_or_default();
-                return Err(format!(
-                    "Spotify remove_tracks failed ({}): {}",
-                    status, text
-                ));
+
+                return Err(format!("Spotify remove_tracks failed ({})", status));
             }
         }
 
@@ -892,11 +895,8 @@ impl MusicProvider for SpotifyProvider {
 
         if !res.status().is_success() {
             let status = res.status();
-            let text = res.text().await.unwrap_or_default();
-            return Err(format!(
-                "Spotify delete_playlist failed ({}): {}",
-                status, text
-            ));
+
+            return Err(format!("Spotify delete_playlist failed ({})", status));
         }
 
         Ok(())
@@ -1113,27 +1113,29 @@ mod tests {
                 crate::auth::keyring_store::retrieve_credential("spotify", &conn)
             {
                 let provider = SpotifyProvider::new(sp_dc);
-                println!("Calling provider.list_playlists()...");
+                crate::diagnostics::write_error(&format!("Calling provider.list_playlists()..."));
                 let start = std::time::Instant::now();
                 match provider.list_playlists().await {
                     Ok(playlists) => {
-                        println!(
+                        crate::diagnostics::write_error(&format!(
                             "LIST_PLAYLISTS SUCCESS! Found {} playlists in {:?}",
                             playlists.len(),
                             start.elapsed()
-                        );
+                        ));
                         for (i, p) in playlists.iter().enumerate() {
-                            println!(
+                            crate::diagnostics::write_error(&format!(
                                 "  #{:02}: title='{}', tracks={}, public={}, id={}",
                                 i + 1,
                                 p.title,
                                 p.track_count,
                                 p.is_public,
                                 p.id
-                            );
+                            ));
                         }
                     }
-                    Err(e) => println!("LIST_PLAYLISTS FAILED: {}", e),
+                    Err(e) => {
+                        crate::diagnostics::write_error(&format!("LIST_PLAYLISTS FAILED: {}", e))
+                    }
                 }
             }
         }

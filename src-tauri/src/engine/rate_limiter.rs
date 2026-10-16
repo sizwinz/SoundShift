@@ -54,6 +54,6 @@ impl SearchRateLimiter {
 
 impl Default for SearchRateLimiter {
     fn default() -> Self {
-        Self::new(3, 175)
+        Self::new(4, 120)
     }
 }

@@ -4,6 +4,7 @@ import {
   useState,
   useEffect,
   useCallback,
+  useRef,
   ReactNode,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -11,6 +12,7 @@ import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "../utils/tauri";
 import {
   TransferStage,
+  LifecycleUpdate,
   TransferProgressPayload,
   TransferLogPayload,
   AuditResult,
@@ -38,11 +40,11 @@ interface TransferContextType {
   isDrawerOpen: boolean;
   isDrawerExpanded: boolean;
   error: string | null;
+  controlPending: boolean;
   startTransfer: (config: BatchTransferConfig) => Promise<void>;
   pauseTransfer: () => Promise<void>;
   resumeTransfer: () => Promise<void>;
   cancelTransfer: () => Promise<void>;
-  retryFailedTracks: () => Promise<void>;
   toggleDrawerExpanded: () => void;
   setDrawerExpanded: (expanded: boolean) => void;
   closeDrawer: () => void;
@@ -64,6 +66,25 @@ export function TransferProvider({ children }: { children: ReactNode }) {
   const [isDrawerExpanded, setIsDrawerExpanded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const activeJobId = useRef<string | null>(null);
+  const lifecycle = useRef<LifecycleUpdate | null>(null);
+  const requestToken = useRef(0);
+  const listenersReady = useRef<Promise<boolean> | null>(null);
+  const [controlPending, setControlPending] = useState(false);
+  const pendingControlJob = useRef<string | null>(null);
+  const isTerminal = (state: LifecycleUpdate["state"]) => ["cancelled", "completed_verified", "recovery_required"].includes(state);
+  const applyLifecycle = useCallback((update: LifecycleUpdate) => {
+    if (update.job_id !== activeJobId.current) return;
+    const previous = lifecycle.current;
+    if (previous && (update.event_seq <= previous.event_seq || isTerminal(previous.state))) return;
+    lifecycle.current = update;
+    const stages: Record<LifecycleUpdate["state"], TransferStage> = {
+      starting: "starting", running: "transferring", pausing: "pausing", paused: "paused",
+      cancelling: "cancelling", cancelled: "cancelled", completed_verified: "completed", recovery_required: "recovery_required",
+    };
+    setStage(stages[update.state]);
+  }, []);
+
   // Subscribe to Tauri events
   useEffect(() => {
     if (!isTauri()) return;
@@ -77,16 +98,9 @@ export function TransferProvider({ children }: { children: ReactNode }) {
           "transfer:progress",
           (event) => {
             const payload = event.payload;
-            setProgress(payload);
-            if (
-              payload.stage === "transferring" ||
-              payload.stage === "completed" ||
-              payload.stage === "cancelled" ||
-              payload.stage === "failed"
-            ) {
-              setStage(payload.stage as TransferStage);
-            }
-
+            if (payload.job_id !== activeJobId.current) return;
+            if (lifecycle.current && isTerminal(lifecycle.current.state)) return;
+            setProgress((prev) => prev && prev.processed > payload.processed ? prev : payload);
             if (payload.current_track) {
               setTrackEvents((prev) => [
                 {
@@ -109,7 +123,11 @@ export function TransferProvider({ children }: { children: ReactNode }) {
           cleanups.push(uProgress);
         }
 
+        const uState = await listen<LifecycleUpdate>("job:state_changed", (event) => applyLifecycle(event.payload));
+        if (!isMounted) uState(); else cleanups.push(uState);
+
         const uLog = await listen<TransferLogPayload>("transfer:log", (event) => {
+          if (event.payload.job_id !== activeJobId.current) return;
           setLogs((prev) => [event.payload, ...prev.slice(0, 199)]);
         });
 
@@ -119,8 +137,9 @@ export function TransferProvider({ children }: { children: ReactNode }) {
           cleanups.push(uLog);
         }
 
-        const uAudit = await listen<AuditResult>("transfer:audit", (event) => {
-          setAuditResult(event.payload);
+        const uAudit = await listen<{ job_id: string; audit: AuditResult }>("transfer:audit", (event) => {
+          if (event.payload.job_id !== activeJobId.current) return;
+          setAuditResult(event.payload.audit);
         });
 
         if (!isMounted) {
@@ -128,20 +147,27 @@ export function TransferProvider({ children }: { children: ReactNode }) {
         } else {
           cleanups.push(uAudit);
         }
+        return isMounted;
       } catch (e) {
-        console.error("Failed to setup transfer listeners:", e);
+        setError("Transfer updates are unavailable. Review recorded job state before taking further action.");
+        return false;
       }
     };
 
-    setupListeners();
+    listenersReady.current = setupListeners();
 
     return () => {
       isMounted = false;
       cleanups.forEach((c) => c());
     };
-  }, []);
+  }, [applyLifecycle]);
 
   const startTransfer = useCallback(async (config: BatchTransferConfig) => {
+    activeJobId.current = config.job_id;
+    lifecycle.current = null;
+    requestToken.current += 1;
+    pendingControlJob.current = null;
+    setControlPending(false);
     setActiveConfig(config);
     setStage("starting");
     setProgress(null);
@@ -160,79 +186,56 @@ export function TransferProvider({ children }: { children: ReactNode }) {
     }
 
     try {
+      if (!listenersReady.current || !await listenersReady.current) throw new Error("Transfer lifecycle updates are unavailable; no transfer was started.");
       const result = await invoke<BatchTransferSummary>("start_batch_transfer", {
         config,
       });
+      if (activeJobId.current !== config.job_id) return;
       setSummary(result);
-      if (result.is_cancelled) {
-        setStage("cancelled");
-      } else {
-        setStage("completed");
-      }
+      applyLifecycle({ job_id: result.job_id, state: result.state, event_seq: result.event_seq });
+      setProgress((previous) => ({
+        job_id: result.job_id, stage: result.state,
+        total: result.total_tracks,
+        processed: result.is_cancelled ? result.successful_tracks + result.failed_tracks + (result.skipped_duplicates ?? 0) : result.total_tracks,
+        successful: result.successful_tracks, failed: result.failed_tracks,
+        current_track: null, worker_id: 0, latency_ms: previous?.latency_ms ?? 0, http_status: 200, is_retry: false,
+      }));
       if (result.audit) {
         setAuditResult(result.audit);
       }
     } catch (err) {
+      if (activeJobId.current !== config.job_id) return;
       const msg = err instanceof Error ? err.message : String(err);
+      // Lifecycle events can mutate the ref while invoke is awaited.
+      const latest = lifecycle.current as LifecycleUpdate | null;
+      if (latest?.state === "completed_verified" || latest?.state === "cancelled") return;
       setError(msg);
-      setStage("failed");
+      if (latest) lifecycle.current = { ...latest, state: "recovery_required" };
+      setStage(latest ? "recovery_required" : "failed");
     }
-  }, []);
+  }, [applyLifecycle]);
 
-  const pauseTransfer = useCallback(async () => {
-    if (!activeConfig || !isTauri()) return;
+  const requestControl = useCallback(async (command: string) => {
+    const jobId = activeJobId.current;
+    if (!jobId || !isTauri() || pendingControlJob.current === jobId) return;
+    pendingControlJob.current = jobId;
+    const token = ++requestToken.current;
+    setControlPending(true);
+    setError(null);
     try {
-      await invoke("pause_batch_transfer", { jobId: activeConfig.job_id });
-      setStage("paused");
+      const update = await invoke<LifecycleUpdate>(command, { jobId });
+      applyLifecycle(update);
     } catch (err) {
-      console.error("Failed to pause transfer:", err);
+      if (activeJobId.current === jobId && !(lifecycle.current && isTerminal(lifecycle.current.state))) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    } finally {
+      if (token === requestToken.current) { pendingControlJob.current = null; setControlPending(false); }
     }
-  }, [activeConfig]);
-
-  const resumeTransfer = useCallback(async () => {
-    if (!activeConfig || !isTauri()) return;
-    try {
-      await invoke("resume_batch_transfer", { jobId: activeConfig.job_id });
-      setStage("transferring");
-    } catch (err) {
-      console.error("Failed to resume transfer:", err);
-    }
-  }, [activeConfig]);
-
-  const cancelTransfer = useCallback(async () => {
-    if (!activeConfig || !isTauri()) return;
-    try {
-      await invoke("cancel_batch_transfer", { jobId: activeConfig.job_id });
-      setStage("cancelled");
-    } catch (err) {
-      console.error("Failed to cancel transfer:", err);
-    }
-  }, [activeConfig]);
-
-  const retryFailedTracks = useCallback(async () => {
-    if (!activeConfig || !summary || summary.failed_tracks === 0) return;
-    // Identify tracks that were not successfully transferred
-    // For non-blocking retry per D-05, slice remaining or failed tracks
-    const failedTrackNames = new Set(
-      trackEvents
-        .filter((event) => event.status >= 400)
-        .map((event) => event.track)
-    );
-    const failedTracks = activeConfig.tracks.filter((track) =>
-      failedTrackNames.has(track.title)
-    );
-    if (failedTracks.length === 0) return;
-
-    const retryConfig: BatchTransferConfig = {
-      ...activeConfig,
-      job_id: `retry_${Date.now()}_${activeConfig.job_id.slice(-6)}`,
-      tracks: failedTracks,
-      is_new_playlist: false,
-      target_playlist_id: summary.target_playlist_id,
-    };
-
-    await startTransfer(retryConfig);
-  }, [activeConfig, summary, trackEvents, startTransfer]);
+  }, [applyLifecycle]);
+  const pauseTransfer = useCallback(() => requestControl("pause_batch_transfer"), [requestControl]);
+  const resumeTransfer = useCallback(() => requestControl("resume_batch_transfer"), [requestControl]);
+  const cancelTransfer = useCallback(() => requestControl("cancel_batch_transfer"), [requestControl]);
 
   const toggleDrawerExpanded = useCallback(() => {
     setIsDrawerExpanded((prev) => !prev);
@@ -251,6 +254,11 @@ export function TransferProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const resetTransfer = useCallback(() => {
+    activeJobId.current = null;
+    lifecycle.current = null;
+    requestToken.current += 1;
+    pendingControlJob.current = null;
+    setControlPending(false);
     setStage("idle");
     setProgress(null);
     setLogs([]);
@@ -276,11 +284,11 @@ export function TransferProvider({ children }: { children: ReactNode }) {
         isDrawerOpen,
         isDrawerExpanded,
         error,
+        controlPending,
         startTransfer,
         pauseTransfer,
         resumeTransfer,
         cancelTransfer,
-        retryFailedTracks,
         toggleDrawerExpanded,
         setDrawerExpanded,
         closeDrawer,

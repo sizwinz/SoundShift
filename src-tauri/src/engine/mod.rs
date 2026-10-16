@@ -1,4 +1,5 @@
 pub mod commands;
+pub mod lifecycle;
 pub mod matcher;
 pub mod normalizer;
 pub mod rate_limiter;

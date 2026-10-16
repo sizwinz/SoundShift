@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod diagnostics;
 pub mod engine;
 pub mod models;
 pub mod providers;
@@ -12,6 +13,7 @@ use tauri::Manager;
 pub struct AppState {
     pub db: Arc<Mutex<rusqlite::Connection>>,
     pub active_transfers: Arc<Mutex<HashMap<String, TransferControl>>>,
+    pub mutation_gate: Arc<tokio::sync::Mutex<()>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -33,7 +35,9 @@ pub fn run() {
             engine::commands::cancel_batch_transfer,
             engine::commands::execute_snapshot_rollback,
             engine::commands::audit_playlist_integrity,
-            engine::commands::get_transfer_history
+            engine::commands::get_transfer_history,
+            engine::commands::get_storage_recovery_notice,
+            engine::commands::acknowledge_storage_recovery
         ])
         .setup(|app| {
             let app_dir = app
@@ -44,6 +48,7 @@ pub fn run() {
             app.manage(AppState {
                 db: Arc::new(Mutex::new(conn)),
                 active_transfers: Arc::new(Mutex::new(HashMap::new())),
+                mutation_gate: Arc::new(tokio::sync::Mutex::new(())),
             });
 
             // Asynchronously center, reveal, set icon, and focus window after event loop initialization

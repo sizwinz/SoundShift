@@ -1,7 +1,7 @@
 use crate::providers::traits::MusicProvider;
 use serde::{Deserialize, Serialize};
 use sha1::Digest;
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotPayload {
@@ -61,6 +61,9 @@ pub struct TransferHistoryEntry {
     pub is_rolled_back: bool,
     pub created_at: i64,
     pub audit_status: Option<AuditResult>,
+    pub job_state: String,
+    pub recovery_required: bool,
+    pub last_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,26 +89,22 @@ pub fn record_operation_intent(
     operation_index: usize,
     track_ids: &[String],
 ) -> Result<String, String> {
-    let operation_id = format!(
-        "op_{}_{}_{}",
-        job_id,
-        operation_index,
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-    );
+    let operation_id = format!("op_{}_{}", job_id, operation_index);
     let payload = serde_json::to_string(track_ids).map_err(|e| e.to_string())?;
     let payload_hash = format!("{:x}", sha1::Sha1::digest(payload.as_bytes()));
     let now = chrono::Utc::now().timestamp();
     conn.execute(
         "INSERT INTO transfer_operations
             (operation_id, job_id, operation_type, operation_index, payload_hash,
-             certainty, status, attempt_count, created_at, updated_at)
-         VALUES (?1, ?2, 'add_tracks', ?3, ?4, 'ambiguous', 'pending', 0, ?5, ?5)",
+             certainty, status, attempt_count, created_at, updated_at, payload_json)
+         VALUES (?1, ?2, 'add_tracks', ?3, ?4, 'ambiguous', 'pending', 0, ?5, ?5, ?6)",
         rusqlite::params![
             operation_id,
             job_id,
             operation_index as i64,
             payload_hash,
-            now
+            now,
+            payload
         ],
     )
     .map_err(|e| format!("Failed to journal operation intent: {}", e))?;
@@ -119,21 +118,26 @@ pub fn update_operation_outcome(
     attempt_count: u32,
     provider_response: Option<&str>,
 ) -> Result<(), String> {
-    conn.execute(
-        "UPDATE transfer_operations
+    let provider_response = provider_response.map(crate::diagnostics::sanitize_for_log);
+    let changed = conn
+        .execute(
+            "UPDATE transfer_operations
          SET certainty = ?1, status = ?2, attempt_count = ?3,
              provider_response = ?4, updated_at = ?5
          WHERE operation_id = ?6",
-        rusqlite::params![
-            outcome.as_str(),
-            outcome.as_str(),
-            attempt_count,
-            provider_response,
-            chrono::Utc::now().timestamp(),
-            operation_id
-        ],
-    )
-    .map_err(|e| format!("Failed to journal operation outcome: {}", e))?;
+            rusqlite::params![
+                outcome.as_str(),
+                outcome.as_str(),
+                attempt_count,
+                provider_response,
+                chrono::Utc::now().timestamp(),
+                operation_id
+            ],
+        )
+        .map_err(|e| format!("Failed to journal operation outcome: {}", e))?;
+    if changed != 1 {
+        return Err("Operation checkpoint not found; recovery required".into());
+    }
     Ok(())
 }
 
@@ -154,7 +158,8 @@ pub fn create_pre_mutation_snapshot(
     added_track_ids: Vec<String>,
 ) -> Result<String, String> {
     let now = chrono::Utc::now().timestamp();
-    let snapshot_id = format!("snap_{}_{}", now, &job_id[..std::cmp::min(8, job_id.len())]);
+    let snapshot_id = format!("snap_{}", job_id);
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
 
     let payload = SnapshotPayload {
         snapshot_id: snapshot_id.clone(),
@@ -180,7 +185,7 @@ pub fn create_pre_mutation_snapshot(
     let payload_json = serde_json::to_string(&payload)
         .map_err(|e| format!("Failed to serialize snapshot payload: {}", e))?;
 
-    conn.execute(
+    tx.execute(
         "INSERT INTO transfer_jobs (
             job_id, source_service, target_service, source_playlist_name, 
             target_playlist_id, target_playlist_name, total_tracks, matched_tracks, job_state,
@@ -205,7 +210,7 @@ pub fn create_pre_mutation_snapshot(
     )
     .map_err(|e| format!("Failed to insert transfer job: {}", e))?;
 
-    conn.execute(
+    tx.execute(
         "INSERT INTO transfer_snapshots (
             snapshot_id, job_id, mutation_payload, payload_hash, is_rolled_back, created_at
         ) VALUES (?1, ?2, ?3, ?4, 0, ?5)",
@@ -213,38 +218,170 @@ pub fn create_pre_mutation_snapshot(
     )
     .map_err(|e| format!("Failed to insert transfer snapshot: {}", e))?;
 
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(snapshot_id)
 }
 
-/// Updates the recorded added tracks in the snapshot after batch completion.
-pub fn update_snapshot_added_tracks(
+/// Baselines stay immutable. Confirmed operation payloads are the durable additions ledger.
+pub fn load_snapshot(
     conn: &rusqlite::Connection,
     snapshot_id: &str,
-    actual_added_track_ids: &[String],
-) -> Result<(), String> {
-    let mut stmt = conn
-        .prepare("SELECT mutation_payload FROM transfer_snapshots WHERE snapshot_id = ?1")
+) -> Result<SnapshotPayload, String> {
+    let (json, stored_hash, target_id): (String, String, String) = conn
+        .query_row(
+            "SELECT s.mutation_payload, s.payload_hash, j.target_playlist_id
+         FROM transfer_snapshots s JOIN transfer_jobs j ON j.job_id = s.job_id
+         WHERE snapshot_id = ?1",
+            [snapshot_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
         .map_err(|e| e.to_string())?;
+    let mut payload: SnapshotPayload = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    let embedded_hash = std::mem::take(&mut payload.payload_hash);
+    let unsigned = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
+    let actual = format!("{:x}", sha1::Sha1::digest(unsigned.as_bytes()));
+    if embedded_hash != actual || stored_hash != actual {
+        return Err("Snapshot integrity check failed. Manual recovery is required.".into());
+    }
+    payload.payload_hash = embedded_hash;
+    payload.target_playlist_id = target_id;
+    let mut stmt = conn
+        .prepare(
+            "SELECT payload_json FROM transfer_operations WHERE job_id = ?1
+         AND operation_type = 'add_tracks' AND status = 'confirmed' ORDER BY operation_index",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([&payload.job_id], |row| row.get::<_, Option<String>>(0))
+        .map_err(|e| e.to_string())?;
+    for row in rows {
+        let json = row
+            .map_err(|e| e.to_string())?
+            .ok_or("Legacy operation lacks a recoverable payload; manual review required")?;
+        let ids: Vec<String> = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+        payload.added_track_ids.extend(ids);
+    }
+    Ok(payload)
+}
 
-    let payload_str: String = stmt
-        .query_row(rusqlite::params![snapshot_id], |row| row.get(0))
-        .map_err(|e| format!("Snapshot not found: {}", e))?;
+/// Validates snapshot payload checksum against recorded payload hash (DATA-06).
+pub fn verify_snapshot_integrity(
+    conn: &rusqlite::Connection,
+    snapshot_id: &str,
+) -> Result<bool, String> {
+    match load_snapshot(conn, snapshot_id) {
+        Ok(_) => Ok(true),
+        Err(e) if e.contains("Snapshot integrity check failed") => Ok(false),
+        Err(e) => Err(e),
+    }
+}
 
-    let mut payload: SnapshotPayload = serde_json::from_str(&payload_str)
-        .map_err(|e| format!("Failed to parse snapshot: {}", e))?;
+pub fn set_job_state(
+    conn: &rusqlite::Connection,
+    job_id: &str,
+    state: &str,
+    error: Option<&str>,
+) -> Result<(), String> {
+    persist_job_state(conn, job_id, state, error).map(|_| ())
+}
 
-    payload.added_track_ids = actual_added_track_ids.to_vec();
-
-    let updated_json = serde_json::to_string(&payload)
-        .map_err(|e| format!("Failed to serialize updated snapshot: {}", e))?;
-
-    conn.execute(
-        "UPDATE transfer_snapshots SET mutation_payload = ?1 WHERE snapshot_id = ?2",
-        rusqlite::params![updated_json, snapshot_id],
+pub fn persist_job_state(
+    conn: &rusqlite::Connection,
+    job_id: &str,
+    state: &str,
+    error: Option<&str>,
+) -> Result<u64, String> {
+    let error = error.map(crate::diagnostics::sanitize_for_log);
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let changed = tx
+        .execute(
+            "UPDATE transfer_jobs SET job_state = ?1, recovery_required = ?2, last_error = ?3,
+         updated_at = ?4 WHERE job_id = ?5",
+            rusqlite::params![
+                state,
+                state == "recovery_required",
+                error,
+                chrono::Utc::now().timestamp(),
+                job_id
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    if changed != 1 {
+        return Err("Transfer job not found".into());
+    }
+    tx.execute(
+        "INSERT INTO transfer_events (job_id, event_type, event_payload, event_seq, created_at)
+         SELECT ?1, 'state_changed', ?2, COALESCE(MAX(event_seq), 0) + 1, ?3
+         FROM transfer_events WHERE job_id = ?1",
+        rusqlite::params![
+            job_id,
+            serde_json::json!({"state": state}).to_string(),
+            chrono::Utc::now().timestamp()
+        ],
     )
-    .map_err(|e| format!("Failed to update snapshot: {}", e))?;
+    .map_err(|e| e.to_string())?;
+    let seq: u64 = tx
+        .query_row(
+            "SELECT MAX(event_seq) FROM transfer_events WHERE job_id = ?1",
+            [job_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(seq)
+}
 
+/// Never resume mutations automatically after an interrupted process.
+pub fn reconcile_incomplete_jobs(conn: &rusqlite::Connection) -> Result<(), String> {
+    let ids = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT job_id FROM transfer_jobs WHERE job_state IN
+             ('planned', 'running', 'pausing', 'paused', 'cancelling', 'rolling_back')",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+    };
+    for id in ids {
+        set_job_state(
+            conn,
+            &id,
+            "recovery_required",
+            Some("Interrupted transfer. Review remote state before retrying or rolling back."),
+        )?;
+    }
     Ok(())
+}
+
+pub fn canonical_track_id(id: &str) -> &str {
+    id.trim()
+        .strip_prefix("spotify:track:")
+        .or_else(|| id.trim().strip_prefix("ytmusic:video:"))
+        .unwrap_or(id.trim())
+}
+
+fn missing_occurrences(expected: &[String], live: &[String]) -> Vec<String> {
+    let mut counts = HashMap::new();
+    for id in live {
+        *counts.entry(canonical_track_id(id)).or_insert(0usize) += 1;
+    }
+    expected
+        .iter()
+        .filter(|id| {
+            let count = counts.entry(canonical_track_id(id)).or_insert(0);
+            if *count == 0 {
+                true
+            } else {
+                *count -= 1;
+                false
+            }
+        })
+        .cloned()
+        .collect()
 }
 
 /// Executes 1-click snapshot rollback: either deletes newly created playlist or removes added tracks.
@@ -270,9 +407,57 @@ pub async fn rollback_snapshot(
             return Err("This snapshot has already been rolled back".to_string());
         }
 
-        let payload: SnapshotPayload = serde_json::from_str(&payload_str)
-            .map_err(|e| format!("Failed to parse snapshot payload: {}", e))?;
+        let _ = payload_str;
+        let payload = load_snapshot(&conn, snapshot_id)?;
+        let uncertain: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM transfer_operations WHERE job_id = ?1 AND status IN ('pending', 'ambiguous')",
+            [&payload.job_id], |row| row.get(0),
+        ).map_err(|e| e.to_string())?;
+        if uncertain > 0 || payload.target_playlist_id.is_empty() {
+            return Err(
+                "Uncertain remote operations require manual reconciliation before rollback".into(),
+            );
+        }
         payload
+    };
+
+    if !(delete_entire_playlist && payload.is_new_playlist)
+        && payload.added_track_ids.iter().any(|added| {
+            payload
+                .pre_existing_track_ids
+                .iter()
+                .any(|prior| canonical_track_id(prior) == canonical_track_id(added))
+        })
+    {
+        return Err("Provider removal cannot safely distinguish added duplicates from pre-existing occurrences. Manual recovery required.".into());
+    }
+
+    let before: Vec<String> = provider
+        .get_playlist_tracks(&payload.target_playlist_id, None)
+        .await?
+        .into_iter()
+        .map(|track| track.id)
+        .collect();
+    let mut expected = payload.pre_existing_track_ids.clone();
+    expected.extend(payload.added_track_ids.clone());
+    if before.len() != expected.len() || !missing_occurrences(&expected, &before).is_empty() {
+        return Err("Playlist changed since the transfer. No rollback mutation was sent; review remote changes first.".into());
+    }
+    let operation_id = {
+        let conn = db.lock().map_err(|e| e.to_string())?;
+        let id = record_operation_intent(
+            &conn,
+            &payload.job_id,
+            usize::MAX / 2 - 1,
+            &payload.added_track_ids,
+        )?;
+        conn.execute(
+            "UPDATE transfer_operations SET operation_type = 'rollback' WHERE operation_id = ?1",
+            [&id],
+        )
+        .map_err(|e| e.to_string())?;
+        set_job_state(&conn, &payload.job_id, "rolling_back", None)?;
+        id
     };
 
     if delete_entire_playlist && payload.is_new_playlist {
@@ -288,28 +473,34 @@ pub async fn rollback_snapshot(
             .get_playlist_tracks(&payload.target_playlist_id, None)
             .await
             .map_err(|e| format!("Rollback verification read failed: {}", e))?;
-        let remaining: HashSet<String> = live_tracks.into_iter().map(|track| track.id).collect();
-        let missing_pre_existing: Vec<String> = payload
-            .pre_existing_track_ids
-            .iter()
-            .filter(|id| !remaining.contains(*id))
-            .cloned()
-            .collect();
-        if !missing_pre_existing.is_empty() {
-            return Err(format!(
-                "Rollback verification failed: {} pre-existing track(s) are missing",
-                missing_pre_existing.len()
-            ));
+        let remaining: Vec<String> = live_tracks.into_iter().map(|track| track.id).collect();
+        let canonical = |ids: &[String]| {
+            ids.iter()
+                .map(|id| canonical_track_id(id).to_string())
+                .collect::<Vec<_>>()
+        };
+        if canonical(&remaining) != canonical(&payload.pre_existing_track_ids) {
+            return Err("Rollback post-state differs from the original ordered playlist; manual review required".into());
         }
     }
 
     {
         let conn = db.lock().map_err(|e| e.to_string())?;
-        conn.execute(
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        update_operation_outcome(
+            &tx,
+            &operation_id,
+            OperationOutcome::Confirmed,
+            1,
+            Some("rollback accepted and track restoration checked"),
+        )?;
+        tx.execute(
             "UPDATE transfer_snapshots SET is_rolled_back = 1 WHERE snapshot_id = ?1",
             rusqlite::params![snapshot_id],
         )
         .map_err(|e| format!("Failed to update rollback state in SQLite: {}", e))?;
+        tx.commit().map_err(|e| e.to_string())?;
+        set_job_state(&conn, &payload.job_id, "rolled_back", None)?;
     }
 
     Ok(())
@@ -330,22 +521,8 @@ pub async fn audit_playlist(
         let live_tracks = provider
             .get_playlist_tracks(target_playlist_id, None)
             .await?;
-        let live_ids: HashSet<String> = live_tracks.into_iter().map(|t| t.id).collect();
-
-        let mut missing_ids = Vec::new();
-        for expected_id in expected_track_ids {
-            let clean_expected = expected_id
-                .trim_start_matches("spotify:track:")
-                .trim_start_matches("ytmusic:video:");
-            let found = live_ids.contains(expected_id)
-                || live_ids.contains(clean_expected)
-                || live_ids.iter().any(|live_id| {
-                    live_id.contains(clean_expected) || clean_expected.contains(live_id)
-                });
-            if !found {
-                missing_ids.push(expected_id.clone());
-            }
-        }
+        let live_ids: Vec<String> = live_tracks.into_iter().map(|t| t.id).collect();
+        let missing_ids = missing_occurrences(expected_track_ids, &live_ids);
 
         if missing_ids.is_empty() || attempt == 2 {
             let total_expected = expected_track_ids.len();
@@ -426,12 +603,30 @@ pub fn get_transfer_history(
                 is_rolled_back: is_rolled_back != 0,
                 created_at,
                 audit_status: None,
+                job_state: String::new(),
+                recovery_required: false,
+                last_error: None,
             })
         })
         .map_err(|e| format!("Failed to read history query: {}", e))?;
 
     let mut entries = Vec::new();
-    for entry in rows.flatten() {
+    for entry in rows {
+        let mut entry = entry.map_err(|e| e.to_string())?;
+        let (state, recovery, error): (String, bool, Option<String>) = conn.query_row(
+            "SELECT job_state, recovery_required, last_error FROM transfer_jobs WHERE job_id = ?1",
+            [&entry.job_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).map_err(|e| e.to_string())?;
+        entry.job_state = state;
+        entry.recovery_required = recovery;
+        entry.last_error = error.as_deref().map(crate::diagnostics::sanitize_for_log);
+        match load_snapshot(conn, &entry.snapshot_id) {
+            Ok(payload) => entry.added_tracks_count = payload.added_track_ids.len(),
+            Err(error) => {
+                entry.recovery_required = true;
+                entry.last_error = Some(error);
+            }
+        }
         entries.push(entry);
     }
 
@@ -450,6 +645,8 @@ mod tests {
         deleted_playlist_id: Arc<Mutex<Option<String>>>,
         removed_track_ids: Arc<Mutex<Vec<String>>>,
         is_deleted: Arc<AtomicBool>,
+        initial_ids: Vec<String>,
+        removal_noop: bool,
     }
 
     #[async_trait]
@@ -462,18 +659,24 @@ mod tests {
             _playlist_id: &str,
             _tx: Option<tokio::sync::mpsc::Sender<Vec<SourceTrack>>>,
         ) -> Result<Vec<SourceTrack>, String> {
-            Ok(vec![SourceTrack {
-                id: "track_pre_1".to_string(),
-                title: "Existing".to_string(),
-                artists: vec!["Artist".to_string()],
-                album: None,
-                duration_ms: 1_000,
-                isrc: None,
-                is_explicit: false,
-                is_playable: true,
-                preview_url: None,
-                thumbnail_url: None,
-            }])
+            let removed = self.removed_track_ids.lock().unwrap();
+            Ok(self
+                .initial_ids
+                .iter()
+                .filter(|id| self.removal_noop || !removed.contains(id))
+                .map(|id| SourceTrack {
+                    id: id.clone(),
+                    title: "Track".into(),
+                    artists: vec![],
+                    album: None,
+                    duration_ms: 1000,
+                    isrc: None,
+                    is_explicit: false,
+                    is_playable: true,
+                    preview_url: None,
+                    thumbnail_url: None,
+                })
+                .collect())
         }
         async fn search_track(&self, _query: &str) -> Result<Vec<SourceTrack>, String> {
             Ok(vec![])
@@ -567,6 +770,12 @@ mod tests {
             deleted_playlist_id: Arc::new(Mutex::new(None)),
             removed_track_ids: Arc::new(Mutex::new(Vec::new())),
             is_deleted: Arc::new(AtomicBool::new(false)),
+            initial_ids: vec![
+                "track_pre_1".into(),
+                "track_add_1".into(),
+                "track_add_2".into(),
+            ],
+            removal_noop: false,
         };
 
         rollback_snapshot(&db, &snapshot_id, false, &provider)
@@ -616,6 +825,8 @@ mod tests {
             deleted_playlist_id: Arc::new(Mutex::new(None)),
             removed_track_ids: Arc::new(Mutex::new(Vec::new())),
             is_deleted: Arc::new(AtomicBool::new(false)),
+            initial_ids: vec!["track_1".into()],
+            removal_noop: false,
         };
 
         // When delete_entire_playlist is true and is_new_playlist is true, delete_playlist is invoked
@@ -628,5 +839,171 @@ mod tests {
             provider.deleted_playlist_id.lock().unwrap().as_deref(),
             Some("PL_new_777")
         );
+    }
+
+    #[tokio::test]
+    async fn test_rollback_fails_if_remote_state_changed() {
+        let conn = setup_test_db();
+        let db = Arc::new(Mutex::new(conn));
+
+        let job_id = "job_test_diff";
+        let snapshot_id = {
+            let conn = db.lock().unwrap();
+            create_pre_mutation_snapshot(
+                &conn,
+                job_id,
+                "spotify",
+                "ytmusic",
+                "Playlist",
+                "PL_diff_1",
+                "Playlist",
+                false,
+                1,
+                1,
+                vec!["pre_1".into()],
+                vec!["add_1".into()],
+            )
+            .expect("create snapshot")
+        };
+
+        // Live provider has an unexpected track "external_user_added"
+        let provider = MockRollbackProvider {
+            deleted_playlist_id: Arc::new(Mutex::new(None)),
+            removed_track_ids: Arc::new(Mutex::new(Vec::new())),
+            is_deleted: Arc::new(AtomicBool::new(false)),
+            initial_ids: vec!["pre_1".into(), "add_1".into(), "external_user_added".into()],
+            removal_noop: false,
+        };
+
+        let result = rollback_snapshot(&db, &snapshot_id, false, &provider).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("Playlist changed since the transfer"));
+    }
+
+    #[tokio::test]
+    async fn test_rollback_fails_if_uncertain_operations_exist() {
+        let conn = setup_test_db();
+        let db = Arc::new(Mutex::new(conn));
+
+        let job_id = "job_test_uncertain";
+        let snapshot_id = {
+            let conn = db.lock().unwrap();
+            create_pre_mutation_snapshot(
+                &conn,
+                job_id,
+                "spotify",
+                "ytmusic",
+                "Playlist",
+                "PL_unc_1",
+                "Playlist",
+                false,
+                1,
+                1,
+                vec!["pre_1".into()],
+                vec!["add_1".into()],
+            )
+            .expect("create snapshot")
+        };
+
+        // Record a pending operation
+        {
+            let conn = db.lock().unwrap();
+            record_operation_intent(&conn, job_id, 0, &["add_1".into()]).expect("record intent");
+        }
+
+        let provider = MockRollbackProvider {
+            deleted_playlist_id: Arc::new(Mutex::new(None)),
+            removed_track_ids: Arc::new(Mutex::new(Vec::new())),
+            is_deleted: Arc::new(AtomicBool::new(false)),
+            initial_ids: vec!["pre_1".into(), "add_1".into()],
+            removal_noop: false,
+        };
+
+        let result = rollback_snapshot(&db, &snapshot_id, false, &provider).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("Uncertain remote operations require manual reconciliation"));
+    }
+
+    #[test]
+    fn test_reconcile_incomplete_jobs_transitions_interrupted_states() {
+        let conn = setup_test_db();
+        let job_id = "job_interrupted";
+        create_pre_mutation_snapshot(
+            &conn,
+            job_id,
+            "spotify",
+            "ytmusic",
+            "Interrupted",
+            "PL_int_1",
+            "Interrupted",
+            false,
+            1,
+            1,
+            vec![],
+            vec![],
+        )
+        .expect("create snapshot");
+
+        set_job_state(&conn, job_id, "running", None).expect("set running");
+
+        // Reconcile
+        reconcile_incomplete_jobs(&conn).expect("reconcile");
+
+        let (state, recovery): (String, bool) = conn
+            .query_row(
+                "SELECT job_state, recovery_required FROM transfer_jobs WHERE job_id = ?1",
+                [job_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("query job");
+
+        assert_eq!(state, "recovery_required");
+        assert!(recovery);
+    }
+
+    #[test]
+    fn test_verify_snapshot_integrity() {
+        let conn = setup_test_db();
+        let job_id = "job_integrity";
+        let snap_id = create_pre_mutation_snapshot(
+            &conn,
+            job_id,
+            "spotify",
+            "ytmusic",
+            "Integrity",
+            "PL_int_2",
+            "Integrity",
+            false,
+            1,
+            1,
+            vec![],
+            vec![],
+        )
+        .expect("create snapshot");
+
+        let is_valid = verify_snapshot_integrity(&conn, &snap_id).expect("verify");
+        assert!(is_valid);
+
+        // Tamper with snapshot payload
+        conn.execute(
+            "UPDATE transfer_snapshots SET mutation_payload = '{\"tampered\": true}' WHERE snapshot_id = ?1",
+            [&snap_id],
+        )
+        .expect("tamper payload");
+
+        let tampered_result = verify_snapshot_integrity(&conn, &snap_id);
+        assert!(tampered_result.is_err() || !tampered_result.unwrap());
+    }
+
+    #[test]
+    fn test_missing_occurrences_multiset() {
+        let expected = vec!["track_1".into(), "track_1".into(), "track_2".into()];
+        let live = vec!["track_1".into(), "track_2".into()];
+        let missing = missing_occurrences(&expected, &live);
+        assert_eq!(missing, vec!["track_1".to_string()]);
     }
 }

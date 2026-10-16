@@ -139,6 +139,9 @@ describe("1-Click Snapshot Rollback Plan Resolution (SAFE-03, D-07)", () => {
       pre_existing_count: 0,
       is_rolled_back: false,
       created_at: 1727950000,
+      job_state: "completed_verified",
+      recovery_required: false,
+      last_error: null,
     };
 
     const plan = resolveRollbackPlan(newPlaylistSnapshot, true);
@@ -162,6 +165,9 @@ describe("1-Click Snapshot Rollback Plan Resolution (SAFE-03, D-07)", () => {
       pre_existing_count: 0,
       is_rolled_back: false,
       created_at: 1727950000,
+      job_state: "completed_verified",
+      recovery_required: false,
+      last_error: null,
     };
 
     const plan = resolveRollbackPlan(newPlaylistSnapshot, false);
@@ -185,6 +191,9 @@ describe("1-Click Snapshot Rollback Plan Resolution (SAFE-03, D-07)", () => {
       pre_existing_count: 140,
       is_rolled_back: false,
       created_at: 1727950000,
+      job_state: "completed_verified",
+      recovery_required: false,
+      last_error: null,
     };
 
     // Even if user chose delete playlist, appended playlist must NEVER delete playlist

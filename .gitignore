@@ -27,6 +27,7 @@ src-tauri/gen/schemas/*.custom.json
 !.env.example
 
 # Temporary agent, planning, and task files
+.ai/
 .planning/
 .kilo/
 .gemini/
