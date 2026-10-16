@@ -93,7 +93,7 @@ export function Titlebar({ breadcrumb }: TitlebarProps) {
             SOUNDSHIFT
           </span>
           <span className="text-[10px] font-mono text-zinc-500 bg-white/[0.04] px-1.5 py-0.2 rounded border border-white/[0.08]">
-            v0.9.0
+            v0.9.1
           </span>
         </div>
 

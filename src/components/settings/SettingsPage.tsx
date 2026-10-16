@@ -235,7 +235,7 @@ export function SettingsPage() {
               </div>
               <div className="flex justify-between">
                 <span className="text-zinc-500 font-sans">Version:</span>
-                <span>0.9.0-beta</span>
+                <span>0.9.1</span>
               </div>
             </div>
           </Card>
