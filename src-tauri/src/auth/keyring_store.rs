@@ -122,9 +122,11 @@ pub fn decrypt_aes_gcm(payload: &str) -> Result<String, String> {
     Err("Unrecognized ciphertext envelope format".to_string())
 }
 
+#[allow(dead_code)]
 mod fmt_hex {
     use std::fmt;
 
+    #[allow(dead_code)]
     pub struct Hex<'a>(pub &'a [u8]);
 
     impl<'a> fmt::LowerHex for Hex<'a> {
