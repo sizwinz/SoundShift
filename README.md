@@ -24,6 +24,10 @@
 
 ---
 
+<div align="center">
+<video src="https://github.com/user-attachments/assets/9983d9d2-e760-4070-9f3c-5011bd2af2d5" width="880" autoplay="autoplay"></video>
+</div>
+
 ## What is SoundShift?
 
 SoundShift is a fast, local desktop app that moves your music playlists between **Spotify** and **YouTube Music**.
