@@ -10,6 +10,8 @@ pub struct YouTubeMusicProvider {
     client: reqwest::Client,
     cookie_str: String,
     sapisid: String,
+    #[cfg(test)]
+    edit_url: Option<String>,
 }
 
 impl YouTubeMusicProvider {
@@ -57,6 +59,8 @@ impl YouTubeMusicProvider {
                 .unwrap_or_else(|_| reqwest::Client::new()),
             cookie_str,
             sapisid,
+            #[cfg(test)]
+            edit_url: None,
         }
     }
 
@@ -611,9 +615,12 @@ impl MusicProvider for YouTubeMusicProvider {
             "actions": actions
         });
 
+        let endpoint = "https://music.youtube.com/youtubei/v1/browse/edit_playlist";
+        #[cfg(test)]
+        let endpoint = self.edit_url.as_deref().unwrap_or(endpoint);
         let res = self
             .client
-            .post("https://music.youtube.com/youtubei/v1/browse/edit_playlist")
+            .post(endpoint)
             .headers(headers)
             .json(&body)
             .send()
@@ -622,8 +629,10 @@ impl MusicProvider for YouTubeMusicProvider {
 
         if !res.status().is_success() {
             let status = res.status();
-            let body_text = res.text().await.unwrap_or_default();
-            return Err(format!("Add tracks failed with status {}: {}", status, body_text));
+            return Err(format!(
+                "YouTube Music rejected playlist mutation (HTTP {})",
+                status
+            ));
         }
 
         let json: Value = res
@@ -633,7 +642,9 @@ impl MusicProvider for YouTubeMusicProvider {
 
         if let Some(status) = json.get("status").and_then(|s| s.as_str()) {
             if status == "STATUS_FAILED" {
-                return Err("YouTube Music rejected playlist mutation with STATUS_FAILED".to_string());
+                return Err(
+                    "YouTube Music rejected playlist mutation with STATUS_FAILED".to_string(),
+                );
             }
         }
 
@@ -715,6 +726,41 @@ impl MusicProvider for YouTubeMusicProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn mutation_error_excludes_raw_response_body() {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        let thread = std::thread::spawn(move || {
+            let (mut socket, _) = server.accept().unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                .unwrap();
+            let mut request = [0u8; 8192];
+            socket.read(&mut request).unwrap();
+            let body = "Cookie: SAPISID=offline_secret_cookie\nBearer offline_secret_bearer";
+            write!(
+                socket,
+                "HTTP/1.1 403 Forbidden\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+        let mut provider = YouTubeMusicProvider::new("fixture".into());
+        provider.edit_url = Some(format!("http://{address}"));
+        let error = provider
+            .add_tracks_to_playlist("fixture", &["track".into()])
+            .await
+            .unwrap_err();
+        thread.join().unwrap();
+        assert!(error.contains("403"));
+        assert!(
+            !error.contains("offline_secret"),
+            "provider error leaked its raw response: {error}"
+        );
+    }
 
     #[test]
     fn test_parse_duration_to_ms() {

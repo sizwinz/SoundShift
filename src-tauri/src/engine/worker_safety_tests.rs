@@ -458,3 +458,48 @@ fn subprocess_crash_boundaries_do_not_replay() {
         assert!(Path::new(&dir.0).join("soundshift.db").is_file());
     }
 }
+
+#[tokio::test]
+async fn cancellation_interrupts_inter_batch_pacing() {
+    let (_, control) = fixture();
+    let cancellation = control.clone();
+    let pacing = tokio::spawn(async move { pace_batch(&control).await });
+    tokio::task::yield_now().await;
+    cancellation.cancel().unwrap();
+    tokio::time::timeout(Duration::from_millis(100), pacing)
+        .await
+        .expect("pacing must wake on cancellation")
+        .unwrap();
+}
+
+#[tokio::test]
+async fn unsupported_youtube_duplicate_occurrences_block_before_creation() {
+    let conn = Connection::open_in_memory().unwrap();
+    crate::storage::schema::create_tables(&conn).unwrap();
+    let db = Arc::new(Mutex::new(conn));
+    let control = TransferControl::new("duplicates".into(), db.clone(), |_| {});
+    let provider = FakeProvider::new(false, Ok(()));
+    let track: SourceTrack = serde_json::from_value(serde_json::json!({
+        "id":"same", "title":"same", "artists":[], "duration_ms":0,
+        "is_explicit":false,"is_playable":true
+    }))
+    .unwrap();
+    let config = BatchTransferConfig {
+        job_id: "duplicates".into(),
+        source_service: "spotify".into(),
+        target_service: "ytmusic".into(),
+        source_playlist_name: "fixture".into(),
+        target_playlist_id: None,
+        target_playlist_name: None,
+        is_new_playlist: true,
+        tracks: vec![track.clone(), track],
+        concurrency: 1,
+        skip_duplicates: false,
+    };
+    let result = prepare_transfer(&db, &provider, &config, &control).await;
+    assert!(
+        result.is_err(),
+        "duplicate preservation is unsupported and must not silently skip"
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+}

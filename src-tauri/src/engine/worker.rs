@@ -169,6 +169,12 @@ pub fn is_duplicate_track(track: &SourceTrack, existing_tracks: &[SourceTrack]) 
     false
 }
 
+async fn pace_batch(control: &TransferControl) {
+    control
+        .interruptible_delay(std::time::Duration::from_millis(300))
+        .await;
+}
+
 fn consume_retry_budget(budget: &AtomicU32) -> bool {
     let mut current = budget.load(Ordering::SeqCst);
     loop {
@@ -411,6 +417,17 @@ async fn prepare_transfer(
             .await
             .map_err(|_| "Destination baseline read failed. No mutation was sent.".to_string())?
     };
+    if config.target_service == "ytmusic" && !config.skip_duplicates {
+        let mut seen: std::collections::HashSet<&str> =
+            pre_existing_tracks.iter().map(|t| t.id.as_str()).collect();
+        if config
+            .tracks
+            .iter()
+            .any(|track| !seen.insert(track.id.as_str()))
+        {
+            return Err("YouTube Music duplicate occurrence preservation is unsupported. Enable Skip duplicates or review the selection; no mutation was sent.".into());
+        }
+    }
     let pre_existing_ids: Vec<String> = pre_existing_tracks.iter().map(|t| t.id.clone()).collect();
     let snapshot_id = {
         let conn = db.lock().map_err(|e| e.to_string())?;
@@ -660,9 +677,8 @@ impl TransferWorkerPool {
                 break;
             }
 
-            #[cfg(not(test))]
             if chunk_idx > 0 && config.target_service == "ytmusic" {
-                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                pace_batch(&control).await;
             }
 
             let sem_permit = match semaphore.clone().acquire_owned().await {
