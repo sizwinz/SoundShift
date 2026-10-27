@@ -1,7 +1,7 @@
 use rusqlite::{Connection, OptionalExtension, Result};
 use std::collections::HashSet;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 1;
+pub const CURRENT_SCHEMA_VERSION: i64 = 2;
 
 fn ensure_column(
     conn: &Connection,
@@ -67,6 +67,23 @@ fn ensure_indexes(conn: &Connection) -> Result<()> {
     ensure_column(conn, "transfer_operations", "payload_json", "TEXT")?;
     ensure_column(
         conn,
+        "transfer_operations",
+        "evidence_version",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_column(conn, "transfer_operations", "before_json", "TEXT")?;
+    ensure_column(conn, "transfer_operations", "outcome_json", "TEXT")?;
+    ensure_column(conn, "transfer_operations", "sent_at", "INTEGER")?;
+    ensure_column(conn, "transfer_operations", "source_indices_json", "TEXT")?;
+    ensure_column(
+        conn,
+        "transfer_jobs",
+        "skipped_indices_json",
+        "TEXT NOT NULL DEFAULT '[]'",
+    )?;
+
+    ensure_column(
+        conn,
         "transfer_snapshots",
         "payload_hash",
         "TEXT NOT NULL DEFAULT ''",
@@ -91,6 +108,8 @@ pub use super::recovery::{
 };
 
 pub fn run_migrations(conn: &Connection) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    let conn = &*tx;
     conn.execute(
         "CREATE TABLE IF NOT EXISTS schema_metadata (
             key TEXT PRIMARY KEY,
@@ -108,8 +127,8 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         )
         .optional()?;
 
-    let version = persisted.unwrap_or(CURRENT_SCHEMA_VERSION);
-    if version != CURRENT_SCHEMA_VERSION {
+    let version = persisted.unwrap_or(1);
+    if !(1..=CURRENT_SCHEMA_VERSION).contains(&version) {
         return Err(rusqlite::Error::InvalidQuery);
     }
 
@@ -166,7 +185,7 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         ],
     )?;
 
-    Ok(())
+    tx.commit()
 }
 
 pub fn create_tables(conn: &Connection) -> Result<()> {
@@ -296,6 +315,29 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn version_one_migrates_operation_evidence_without_discarding_legacy_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        run_migrations(&conn).unwrap();
+        conn.execute(
+            "UPDATE schema_metadata SET value='1' WHERE key='schema_version'",
+            [],
+        )
+        .unwrap();
+        run_migrations(&conn).unwrap();
+        let version: String = conn
+            .query_row(
+                "SELECT value FROM schema_metadata WHERE key='schema_version'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, "2");
+        let columns: i64 = conn.query_row("SELECT COUNT(*) FROM pragma_table_info('transfer_operations') WHERE name IN ('before_json','outcome_json','sent_at','source_indices_json','evidence_version')",[],|r|r.get(0)).unwrap();
+        assert_eq!(columns, 5);
+    }
 
     #[test]
     fn test_create_tables_in_memory() {

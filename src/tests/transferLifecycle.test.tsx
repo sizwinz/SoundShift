@@ -169,3 +169,19 @@ describe("real transfer lifecycle event handlers and controls", () => {
     root = createRoot(container);
   });
 });
+
+it("renders quantified uncertain outcomes from the real transfer command handler",async()=>{
+  await start();
+  await state("running",1);
+  await act(async()=>transfers.get("job_one")!.resolve({job_id:"job_one",snapshot_id:"snap",target_playlist_id:"target",total_tracks:3,successful_tracks:1,failed_tracks:0,is_cancelled:false,audit:null,state:"recovery_required",event_seq:2,counts:{selected:3,confirmed:1,failed:0,skipped:0,uncertain:1,unsent:1},verification:"unavailable"} as BatchTransferSummary));
+  expect(container.textContent).toContain("1 uncertain");
+  expect(current.progress?.processed).toBe(2);
+  expect(current.stage).toBe("recovery_required");
+});
+
+it("freezes recovery when an IPC error accompanies an outdated running state",async()=>{
+  await start();await state("running",1);
+  await act(async()=>transfers.get("job_one")!.resolve({job_id:"job_one",snapshot_id:"snap",target_playlist_id:"target",total_tracks:1,successful_tracks:0,failed_tracks:0,is_cancelled:false,audit:null,state:"running",event_seq:1,error:"Lifecycle checkpoint failed",counts:{selected:1,confirmed:0,failed:0,skipped:0,uncertain:1,unsent:0},verification:"unavailable"}));
+  expect(current.stage).toBe("recovery_required");
+  await state("running",99);expect(current.stage).toBe("recovery_required");
+});

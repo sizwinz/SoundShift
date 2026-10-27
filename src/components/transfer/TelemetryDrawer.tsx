@@ -120,7 +120,9 @@ export const TelemetryDrawer: React.FC<TelemetryDrawerProps> = ({
 
           {/* Current track or summary */}
           <div className="text-xs text-zinc-400 truncate max-w-xs sm:max-w-md">
-            {isPending ? (
+            {isFinished && summary?.counts ? (
+              <span>{summary.counts.confirmed} confirmed · {summary.counts.failed} failed · {summary.counts.skipped} skipped · {summary.counts.uncertain} uncertain · {summary.counts.unsent} unsent · Verification: {summary.verification ?? "unavailable"}</span>
+            ) : isPending ? (
               <span className="text-amber-300">Waiting for in-flight requests and checkpoints...</span>
             ) : progress?.current_track ? (
               <span className="text-zinc-200 font-medium">{progress.current_track}</span>
@@ -129,7 +131,7 @@ export const TelemetryDrawer: React.FC<TelemetryDrawerProps> = ({
             ) : isCancelled ? (
               <span className="text-amber-400">Migration stopped by user</span>
             ) : isFailed ? (
-              <span className="text-rose-300 truncate">{error || "Transfer failed. Expand for details."}</span>
+              <span className="text-rose-300 truncate">{error || (stage === "recovery_required" ? "Transfer requires review. Expand for details." : "Transfer failed. Expand for details.")}</span>
             ) : (
               <span>Preparing transfer manifest...</span>
             )}

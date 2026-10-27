@@ -72,7 +72,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
   const listenersReady = useRef<Promise<boolean> | null>(null);
   const [controlPending, setControlPending] = useState(false);
   const pendingControlJob = useRef<string | null>(null);
-  const isTerminal = (state: LifecycleUpdate["state"]) => ["cancelled", "completed_verified", "recovery_required"].includes(state);
+  const isTerminal = (state: LifecycleUpdate["state"]) => ["cancelled", "completed_verified", "recovery_required", "manual_review", "rolled_back"].includes(state);
   const applyLifecycle = useCallback((update: LifecycleUpdate) => {
     if (update.job_id !== activeJobId.current) return;
     const previous = lifecycle.current;
@@ -80,7 +80,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
     lifecycle.current = update;
     const stages: Record<LifecycleUpdate["state"], TransferStage> = {
       starting: "starting", running: "transferring", pausing: "pausing", paused: "paused",
-      cancelling: "cancelling", cancelled: "cancelled", completed_verified: "completed", recovery_required: "recovery_required",
+      cancelling: "cancelling", cancelled: "cancelled", completed_verified: "completed", recovery_required: "recovery_required", reconciling: "recovery_required", manual_review: "recovery_required", rolling_back: "recovery_required", rolled_back: "cancelled",
     };
     setStage(stages[update.state]);
   }, []);
@@ -192,11 +192,19 @@ export function TransferProvider({ children }: { children: ReactNode }) {
       });
       if (activeJobId.current !== config.job_id) return;
       setSummary(result);
-      applyLifecycle({ job_id: result.job_id, state: result.state, event_seq: result.event_seq });
+      if(result.error)setError(result.error);
+      if(result.error && !["completed_verified","cancelled","rolled_back"].includes(result.state)) {
+        // Native event handlers can update this ref while IPC is awaited.
+        const latestUpdate = lifecycle.current as LifecycleUpdate | null;
+        lifecycle.current={job_id:result.job_id,state:"recovery_required",event_seq:Math.max(result.event_seq,latestUpdate?.event_seq ?? 0)};
+        setStage("recovery_required");
+      } else {
+        applyLifecycle({ job_id: result.job_id, state: result.state, event_seq: result.event_seq });
+      }
       setProgress((previous) => ({
         job_id: result.job_id, stage: result.state,
         total: result.total_tracks,
-        processed: result.is_cancelled ? result.successful_tracks + result.failed_tracks + (result.skipped_duplicates ?? 0) : result.total_tracks,
+        processed: result.counts ? result.counts.confirmed + result.counts.failed + result.counts.skipped + result.counts.uncertain : result.is_cancelled ? result.successful_tracks + result.failed_tracks + (result.skipped_duplicates ?? 0) : result.total_tracks,
         successful: result.successful_tracks, failed: result.failed_tracks,
         current_track: null, worker_id: 0, latency_ms: previous?.latency_ms ?? 0, http_status: 200, is_retry: false,
       }));

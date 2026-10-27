@@ -214,7 +214,44 @@ pub async fn start_batch_transfer(
         transfers.remove(&job_id);
     }
 
-    result.map_err(|error| crate::diagnostics::sanitize_for_log(&error))
+    result.or_else(|error| {
+        let conn = state.db.lock().map_err(|_| "Summary storage unavailable")?;
+        let inspection = crate::engine::recovery::inspect_job(&conn, &job_id)
+            .map_err(|_| crate::diagnostics::sanitize_for_log(&error))?;
+        if !matches!(
+            inspection.state.as_str(),
+            "recovery_required"
+                | "manual_review"
+                | "cancelled"
+                | "completed_verified"
+                | "rolled_back"
+        ) {
+            return Err(crate::diagnostics::sanitize_for_log(&error));
+        }
+        let target: String = conn
+            .query_row(
+                "SELECT target_playlist_id FROM transfer_jobs WHERE job_id=?1",
+                [&job_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(BatchTransferSummary {
+            job_id: job_id.clone(),
+            snapshot_id: format!("snap_{}", job_id),
+            target_playlist_id: target,
+            total_tracks: inspection.counts.selected,
+            successful_tracks: inspection.counts.confirmed,
+            failed_tracks: inspection.counts.failed,
+            skipped_duplicates: inspection.counts.skipped,
+            is_cancelled: inspection.state == "cancelled",
+            audit: None,
+            state: inspection.state,
+            event_seq: inspection.event_seq,
+            counts: inspection.counts,
+            verification: inspection.verification,
+            error: Some(crate::diagnostics::sanitize_for_log(&error)),
+        })
+    })
 }
 
 /// The registry is used only to clone the controller, never held across work.
@@ -248,7 +285,11 @@ fn control_job(
         .map_err(|_| "Transfer cannot be controlled in its recorded state")?;
     if !matches!(
         state,
-        JobState::Cancelled | JobState::CompletedVerified | JobState::RecoveryRequired
+        JobState::Cancelled
+            | JobState::CompletedVerified
+            | JobState::RecoveryRequired
+            | JobState::ManualReview
+            | JobState::RolledBack
     ) {
         return Err("Transfer is interrupted; review recovery before taking action".into());
     }
@@ -327,13 +368,17 @@ pub async fn execute_snapshot_rollback(
         _ => return Err(format!("Unsupported target service: {}", target_service)),
     };
 
-    crate::engine::snapshot::rollback_snapshot(
+    crate::engine::recovery::rollback_recorded(
         &state.db,
         &snapshot_id,
         delete_entire_playlist,
         target_provider.as_ref(),
+        |update| {
+            let _ = app.emit("job:state_changed", update);
+        },
     )
     .await
+    .map(|_| ())
 }
 
 /// Runs an on-demand integrity audit asserting destination playlist against expected track IDs.
@@ -358,7 +403,7 @@ pub async fn audit_playlist_integrity(
         _ => return Err(format!("Unsupported target service: {}", target_service)),
     };
 
-    let expected_track_ids = if let Some(snapshot_id) = snapshot_id {
+    let (expected_track_ids, revision) = if let Some(snapshot_id) = snapshot_id {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         let payload = crate::engine::snapshot::load_snapshot(&conn, &snapshot_id)?;
         if payload.target_service != target_service
@@ -375,7 +420,10 @@ pub async fn audit_playlist_integrity(
         }
         let mut ids = payload.pre_existing_track_ids;
         ids.extend(payload.added_track_ids);
-        ids
+        (
+            ids,
+            crate::engine::snapshot::latest_playlist_revision(&conn, &payload.job_id)?,
+        )
     } else {
         if expected_track_ids.is_empty() {
             return Err(
@@ -383,12 +431,13 @@ pub async fn audit_playlist_integrity(
                     .into(),
             );
         }
-        expected_track_ids
+        (expected_track_ids, None)
     };
-    crate::engine::snapshot::audit_playlist(
+    crate::engine::snapshot::audit_playlist_at_revision(
         target_provider.as_ref(),
         &target_playlist_id,
         &expected_track_ids,
+        revision.as_deref(),
     )
     .await
 }
@@ -423,4 +472,93 @@ pub async fn acknowledge_storage_recovery(
         .map_err(|_| "Wait for the active transfer or rollback to finish")?;
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     crate::storage::recovery::acknowledge_recovery(&conn, reviewed)
+}
+
+fn recorded_job_provider(
+    app: &tauri::AppHandle,
+    job_id: &str,
+) -> Result<Box<dyn MusicProvider>, String> {
+    let state = app.state::<AppState>();
+    let conn = state.db.lock().map_err(|_| "Storage lock unavailable")?;
+    let service: String = conn
+        .query_row(
+            "SELECT target_service FROM transfer_jobs WHERE job_id=?1",
+            [job_id],
+            |r| r.get(0),
+        )
+        .map_err(|_| "Recorded job not found")?;
+    let token = crate::auth::keyring_store::retrieve_credential(&service, &conn)?
+        .ok_or("Session unavailable; re-authenticate before recovery")?;
+    match service.as_str() {
+        "spotify" => Ok(Box::new(SpotifyProvider::new(token))),
+        "ytmusic" => Ok(Box::new(YouTubeMusicProvider::new(token))),
+        _ => Err("Unsupported recorded provider".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn inspect_transfer_job(
+    app: tauri::AppHandle,
+    job_id: String,
+) -> Result<crate::engine::recovery::JobInspection, String> {
+    let state = app.state::<AppState>();
+    let conn = state.db.lock().map_err(|_| "Storage lock unavailable")?;
+    crate::engine::recovery::inspect_job(&conn, &job_id)
+}
+
+#[tauri::command]
+pub async fn reconcile_transfer_job(
+    app: tauri::AppHandle,
+    job_id: String,
+) -> Result<crate::engine::recovery::JobInspection, String> {
+    let state = app.state::<AppState>();
+    let _guard = state
+        .mutation_gate
+        .clone()
+        .try_lock_owned()
+        .map_err(|_| "Wait for the active transfer or rollback to finish")?;
+    let provider = recorded_job_provider(&app, &job_id)?;
+    crate::engine::recovery::reconcile_job(&state.db, provider.as_ref(), &job_id, |update| {
+        let _ = app.emit("job:state_changed", update);
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn resume_recorded_transfer(
+    app: tauri::AppHandle,
+    job_id: String,
+) -> Result<crate::engine::recovery::JobInspection, String> {
+    let state = app.state::<AppState>();
+    let _guard = state
+        .mutation_gate
+        .clone()
+        .try_lock_owned()
+        .map_err(|_| "Wait for the active transfer or rollback to finish")?;
+    {
+        let conn = state.db.lock().map_err(|_| "Storage lock unavailable")?;
+        crate::storage::recovery::ensure_mutations_allowed(&conn)?;
+    }
+    let provider = recorded_job_provider(&app, &job_id)?;
+    let event_app = app.clone();
+    let control = TransferControl::new(job_id.clone(), state.db.clone(), move |update| {
+        let _ = event_app.emit("job:state_changed", update);
+    });
+    {
+        state
+            .active_transfers
+            .lock()
+            .map_err(|_| "Transfer registry unavailable")?
+            .insert(job_id.clone(), control.clone());
+    }
+    let result =
+        crate::engine::recovery::resume_job(&state.db, provider.as_ref(), &job_id, &control).await;
+    {
+        state
+            .active_transfers
+            .lock()
+            .map_err(|_| "Transfer registry unavailable")?
+            .remove(&job_id);
+    }
+    result.map_err(|error| crate::diagnostics::sanitize_for_log(&error))
 }

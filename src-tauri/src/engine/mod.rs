@@ -12,3 +12,5 @@ pub use matcher::{
 };
 pub use normalizer::{calculate_similarity, canonicalize_string, normalize_title};
 pub use rate_limiter::SearchRateLimiter;
+
+pub mod recovery;

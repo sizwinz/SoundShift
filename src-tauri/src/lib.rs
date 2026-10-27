@@ -36,6 +36,9 @@ pub fn run() {
             engine::commands::execute_snapshot_rollback,
             engine::commands::audit_playlist_integrity,
             engine::commands::get_transfer_history,
+            engine::commands::inspect_transfer_job,
+            engine::commands::reconcile_transfer_job,
+            engine::commands::resume_recorded_transfer,
             engine::commands::get_storage_recovery_notice,
             engine::commands::acknowledge_storage_recovery
         ])

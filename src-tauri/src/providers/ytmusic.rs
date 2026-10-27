@@ -1,5 +1,9 @@
 use crate::auth::sapisid::generate_sapisid_hash;
 use crate::models::{Playlist, SourceTrack};
+use crate::providers::contracts::{
+    MutationOutcome, OccurrenceOutcome, OccurrenceStatus, PlaylistOccurrence, PlaylistRead,
+};
+use crate::providers::error::{ProviderError, ProviderErrorKind, SendCertainty};
 use crate::providers::traits::MusicProvider;
 use async_trait::async_trait;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, COOKIE, USER_AGENT};
@@ -61,6 +65,284 @@ impl YouTubeMusicProvider {
             sapisid,
             #[cfg(test)]
             edit_url: None,
+        }
+    }
+
+    async fn fetch_playlist(
+        &self,
+        playlist_id: &str,
+        tx: Option<tokio::sync::mpsc::Sender<Vec<SourceTrack>>>,
+    ) -> Result<PlaylistRead, ProviderError> {
+        let headers = self.build_headers().map_err(ProviderError::before_send)?;
+        let browse_id = if playlist_id.starts_with("VL") {
+            playlist_id.to_string()
+        } else {
+            format!("VL{}", playlist_id)
+        };
+
+        let body = json!({
+            "context": Self::client_context(),
+            "browseId": browse_id
+        });
+
+        let endpoint = "https://music.youtube.com/youtubei/v1/browse";
+        #[cfg(test)]
+        let endpoint = self.edit_url.as_deref().unwrap_or(endpoint);
+        let res = self
+            .client
+            .post(endpoint)
+            .headers(headers.clone())
+            .json(&body)
+            .send()
+            .await
+            .map_err(ProviderError::read_transport)?;
+
+        if !res.status().is_success() {
+            return Err(ProviderError::read_http(
+                res.status().as_u16(),
+                res.headers(),
+            ));
+        }
+
+        let json: Value = res.json().await.map_err(|_| {
+            ProviderError::new(
+                ProviderErrorKind::MalformedResponse,
+                SendCertainty::NotSent,
+                "Invalid playlist response schema",
+            )
+        })?;
+
+        let mut all_tracks = Vec::new();
+        let mut remote_ids = Vec::new();
+        let mut continuation_token: Option<String>;
+
+        // Parse initial batch - support both twoColumnBrowseResultsRenderer (desktop web)
+        // and singleColumnBrowseResultsRenderer (mobile/tablet layout)
+        let shelf = json.pointer("/contents/twoColumnBrowseResultsRenderer/secondaryContents/sectionListRenderer/contents/0/musicPlaylistShelfRenderer")
+            .or_else(|| json.pointer("/contents/twoColumnBrowseResultsRenderer/secondaryContents/sectionListRenderer/contents/0/musicShelfRenderer"))
+            .or_else(|| json.pointer("/contents/singleColumnBrowseResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents/0/musicPlaylistShelfRenderer"))
+            .or_else(|| json.pointer("/contents/singleColumnBrowseResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents/0/musicShelfRenderer"));
+
+        let shelf_obj = shelf.ok_or_else(|| {
+            ProviderError::new(
+                ProviderErrorKind::MalformedResponse,
+                SendCertainty::NotSent,
+                "Playlist schema mismatch; incomplete read",
+            )
+        })?;
+        {
+            if let Some(items) = shelf_obj["contents"].as_array() {
+                let mut chunk = Vec::new();
+                for item in items {
+                    let renderer = &item["musicResponsiveListItemRenderer"];
+                    if item.get("continuationItemRenderer").is_none() {
+                        chunk.push(Self::parse_list_item_renderer(renderer).unwrap_or_else(|| {
+                            SourceTrack::unavailable(all_tracks.len() + chunk.len())
+                        }));
+                        remote_ids.push(
+                            renderer
+                                .pointer("/playlistItemData/playlistSetVideoId")
+                                .and_then(|v| v.as_str())
+                                .filter(|s| !s.is_empty())
+                                .map(str::to_owned),
+                        );
+                    }
+                }
+
+                if let Some(ref sender) = tx {
+                    let _ = sender.send(chunk.clone()).await;
+                }
+
+                all_tracks.extend(chunk);
+
+                // Continuation token can be in continuations array or embedded continuationItemRenderer
+                continuation_token = shelf_obj.pointer("/continuations/0/nextContinuationData/continuation")
+                    .and_then(|c| c.as_str())
+                    .map(|s| s.to_string())
+                    .or_else(|| {
+                        items.iter().find_map(|item| {
+                            item.pointer("/continuationItemRenderer/continuationEndpoint/continuationCommand/token")
+                                .and_then(|t| t.as_str())
+                                .map(|s| s.to_string())
+                        })
+                    });
+            } else {
+                return Err(ProviderError::new(
+                    ProviderErrorKind::MalformedResponse,
+                    SendCertainty::NotSent,
+                    "Playlist item schema mismatch; incomplete read",
+                ));
+            }
+        }
+
+        // Paginate continuations in 100-track chunks per D-02
+        let mut seen_continuations = std::collections::HashSet::new();
+        while let Some(token) = continuation_token {
+            if !seen_continuations.insert(token.clone()) {
+                return Err(ProviderError::new(
+                    ProviderErrorKind::Pagination,
+                    SendCertainty::NotSent,
+                    "Repeated playlist continuation; incomplete read",
+                ));
+            }
+            let url = format!(
+                "https://music.youtube.com/youtubei/v1/browse?continuation={}&type=next",
+                token
+            );
+            let cont_body = json!({
+                "context": Self::client_context(),
+            });
+
+            #[cfg(test)]
+            let url = self.edit_url.clone().unwrap_or(url);
+            let cont_res = self
+                .client
+                .post(&url)
+                .headers(headers.clone())
+                .json(&cont_body)
+                .send()
+                .await
+                .map_err(ProviderError::read_transport)?;
+
+            if !cont_res.status().is_success() {
+                return Err(ProviderError::read_http(
+                    cont_res.status().as_u16(),
+                    cont_res.headers(),
+                ));
+            }
+            let cont_json: Value = cont_res.json().await.map_err(|_| {
+                ProviderError::new(
+                    ProviderErrorKind::MalformedResponse,
+                    SendCertainty::NotSent,
+                    "Invalid continuation response schema",
+                )
+            })?;
+
+            let cont_items = cont_json.pointer("/continuationContents/musicPlaylistShelfContinuation/contents")
+                .or_else(|| cont_json.pointer("/continuationContents/musicShelfContinuation/contents"))
+                .or_else(|| cont_json.pointer("/onResponseReceivedActions/0/appendContinuationItemsAction/continuationItems"))
+                .and_then(|c| c.as_array());
+
+            if let Some(items) = cont_items {
+                let mut chunk = Vec::new();
+                for item in items {
+                    let renderer = &item["musicResponsiveListItemRenderer"];
+                    if item.get("continuationItemRenderer").is_none() {
+                        chunk.push(Self::parse_list_item_renderer(renderer).unwrap_or_else(|| {
+                            SourceTrack::unavailable(all_tracks.len() + chunk.len())
+                        }));
+                        remote_ids.push(
+                            renderer
+                                .pointer("/playlistItemData/playlistSetVideoId")
+                                .and_then(|v| v.as_str())
+                                .filter(|s| !s.is_empty())
+                                .map(str::to_owned),
+                        );
+                    }
+                }
+
+                if !chunk.is_empty() {
+                    if let Some(ref sender) = tx {
+                        let _ = sender.send(chunk.clone()).await;
+                    }
+                    all_tracks.extend(chunk);
+                }
+
+                continuation_token = cont_json.pointer("/continuationContents/musicPlaylistShelfContinuation/continuations/0/nextContinuationData/continuation")
+                    .or_else(|| cont_json.pointer("/continuationContents/musicShelfContinuation/continuations/0/nextContinuationData/continuation"))
+                    .and_then(|c| c.as_str())
+                    .map(|s| s.to_string())
+                    .or_else(|| {
+                        items.iter().find_map(|item| {
+                            item.pointer("/continuationItemRenderer/continuationEndpoint/continuationCommand/token")
+                                .and_then(|t| t.as_str())
+                                .map(|s| s.to_string())
+                        })
+                    });
+            } else {
+                return Err(ProviderError::new(
+                    ProviderErrorKind::MalformedResponse,
+                    SendCertainty::NotSent,
+                    "Playlist continuation schema mismatch; incomplete read",
+                ));
+            }
+        }
+
+        Ok(PlaylistRead {
+            occurrences: all_tracks
+                .into_iter()
+                .zip(remote_ids)
+                .enumerate()
+                .map(|(index, (track, remote_id))| PlaylistOccurrence {
+                    index,
+                    track,
+                    remote_id,
+                })
+                .collect(),
+            revision: None,
+            complete: true,
+        })
+    }
+
+    fn removal_actions(occurrences: &[PlaylistOccurrence]) -> Result<Value, ProviderError> {
+        let mut seen = std::collections::HashSet::new();
+        let mut actions = Vec::new();
+        for occurrence in occurrences {
+            let remote = occurrence
+                .remote_id
+                .as_deref()
+                .filter(|id| !id.is_empty())
+                .ok_or_else(|| {
+                    ProviderError::new(
+                        ProviderErrorKind::Unknown,
+                        SendCertainty::NotSent,
+                        "Occurrence identity missing; no removal sent",
+                    )
+                })?;
+            if !seen.insert(remote) {
+                return Err(ProviderError::new(
+                    ProviderErrorKind::Conflict,
+                    SendCertainty::NotSent,
+                    "Duplicate occurrence identity; no removal sent",
+                ));
+            }
+            actions.push(json!({"action":"ACTION_REMOVE_VIDEO","removedVideoId":occurrence.track.id,"setVideoId":remote}));
+        }
+        Ok(Value::Array(actions))
+    }
+
+    fn parse_add_outcome(json: &Value, ids: &[String]) -> MutationOutcome {
+        let results = json["playlistEditResults"].as_array();
+        let mut seen = std::collections::HashSet::new();
+        let occurrences = ids
+            .iter()
+            .enumerate()
+            .map(|(index, id)| {
+                let added = results
+                    .and_then(|r| r.get(index))
+                    .map(|r| &r["playlistEditVideoAddedResultData"]);
+                let remote_id = added
+                    .filter(|a| a["videoId"].as_str() == Some(id.as_str()))
+                    .and_then(|a| a["setVideoId"].as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned);
+                let valid = json["status"].as_str() != Some("STATUS_FAILED")
+                    && remote_id.as_ref().is_some_and(|r| seen.insert(r.clone()));
+                OccurrenceOutcome {
+                    index,
+                    track_id: id.clone(),
+                    status: if valid {
+                        OccurrenceStatus::Accepted
+                    } else {
+                        OccurrenceStatus::Uncertain
+                    },
+                    remote_id: if valid { remote_id } else { None },
+                }
+            })
+            .collect();
+        MutationOutcome {
+            occurrences,
+            revision: None,
         }
     }
 
@@ -226,6 +508,41 @@ impl YouTubeMusicProvider {
 
 #[async_trait]
 impl MusicProvider for YouTubeMusicProvider {
+    async fn canary(&self) -> Result<(), String> {
+        self.check_session().await.map_err(|e| e.to_string())
+    }
+    async fn check_session(&self) -> Result<(), ProviderError> {
+        let headers = self.build_headers().map_err(ProviderError::before_send)?;
+        let endpoint = "https://music.youtube.com/youtubei/v1/browse";
+        #[cfg(test)]
+        let endpoint = self.edit_url.as_deref().unwrap_or(endpoint);
+        let response = self
+            .client
+            .post(endpoint)
+            .headers(headers)
+            .json(&json!({"context":Self::client_context(),"browseId":"FEmusic_liked_playlists"}))
+            .send()
+            .await
+            .map_err(ProviderError::read_transport)?;
+        if !response.status().is_success() {
+            return Err(ProviderError::read_http(
+                response.status().as_u16(),
+                response.headers(),
+            ));
+        }
+        let value: Value = response.json().await.map_err(|_| {
+            ProviderError::new(
+                ProviderErrorKind::MalformedResponse,
+                SendCertainty::NotSent,
+                "Session canary returned invalid JSON",
+            )
+        })?;
+        if value.pointer("/contents/singleColumnBrowseResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents").and_then(|v|v.as_array()).is_none() {
+            return Err(ProviderError::new(ProviderErrorKind::MalformedResponse,SendCertainty::NotSent,"Session canary schema mismatch; reconnect or review provider availability"));
+        }
+        Ok(())
+    }
+
     async fn list_playlists(&self) -> Result<Vec<Playlist>, String> {
         let headers = self.build_headers()?;
         let body = json!({
@@ -323,146 +640,43 @@ impl MusicProvider for YouTubeMusicProvider {
         playlist_id: &str,
         tx: Option<tokio::sync::mpsc::Sender<Vec<SourceTrack>>>,
     ) -> Result<Vec<SourceTrack>, String> {
-        let headers = self.build_headers()?;
-        let browse_id = if playlist_id.starts_with("VL") {
-            playlist_id.to_string()
-        } else {
-            format!("VL{}", playlist_id)
-        };
-
-        let body = json!({
-            "context": Self::client_context(),
-            "browseId": browse_id
-        });
-
-        let res = self
-            .client
-            .post("https://music.youtube.com/youtubei/v1/browse")
-            .headers(headers.clone())
-            .json(&body)
-            .send()
+        Ok(self
+            .fetch_playlist(playlist_id, tx)
             .await
-            .map_err(|e| format!("InnerTube get_playlist_tracks failed: {}", e))?;
-
-        if !res.status().is_success() {
-            return Err(format!(
-                "InnerTube get tracks failed with status: {}",
-                res.status()
+            .map_err(|e| e.to_string())?
+            .occurrences
+            .into_iter()
+            .map(|o| o.track)
+            .collect())
+    }
+    async fn read_playlist(&self, playlist_id: &str) -> Result<PlaylistRead, ProviderError> {
+        let before = self.fetch_playlist(playlist_id, None).await?;
+        let after = self.fetch_playlist(playlist_id, None).await?;
+        if before.ids() != after.ids()
+            || before
+                .occurrences
+                .iter()
+                .map(|o| &o.remote_id)
+                .ne(after.occurrences.iter().map(|o| &o.remote_id))
+        {
+            return Err(ProviderError::new(
+                ProviderErrorKind::Conflict,
+                SendCertainty::NotSent,
+                "Playlist occurrence identity changed during read",
             ));
         }
-
-        let json: Value = res
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse playlist browse response: {}", e))?;
-
-        let mut all_tracks = Vec::new();
-        let mut continuation_token: Option<String> = None;
-
-        // Parse initial batch - support both twoColumnBrowseResultsRenderer (desktop web)
-        // and singleColumnBrowseResultsRenderer (mobile/tablet layout)
-        let shelf = json.pointer("/contents/twoColumnBrowseResultsRenderer/secondaryContents/sectionListRenderer/contents/0/musicPlaylistShelfRenderer")
-            .or_else(|| json.pointer("/contents/twoColumnBrowseResultsRenderer/secondaryContents/sectionListRenderer/contents/0/musicShelfRenderer"))
-            .or_else(|| json.pointer("/contents/singleColumnBrowseResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents/0/musicPlaylistShelfRenderer"))
-            .or_else(|| json.pointer("/contents/singleColumnBrowseResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents/0/musicShelfRenderer"));
-
-        if let Some(shelf_obj) = shelf {
-            if let Some(items) = shelf_obj["contents"].as_array() {
-                let mut chunk = Vec::new();
-                for item in items {
-                    let renderer = &item["musicResponsiveListItemRenderer"];
-                    if !renderer.is_null() {
-                        if let Some(track) = Self::parse_list_item_renderer(renderer) {
-                            chunk.push(track);
-                        }
-                    }
-                }
-
-                if let Some(ref sender) = tx {
-                    let _ = sender.send(chunk.clone()).await;
-                }
-
-                all_tracks.extend(chunk);
-
-                // Continuation token can be in continuations array or embedded continuationItemRenderer
-                continuation_token = shelf_obj.pointer("/continuations/0/nextContinuationData/continuation")
-                    .and_then(|c| c.as_str())
-                    .map(|s| s.to_string())
-                    .or_else(|| {
-                        items.iter().find_map(|item| {
-                            item.pointer("/continuationItemRenderer/continuationEndpoint/continuationCommand/token")
-                                .and_then(|t| t.as_str())
-                                .map(|s| s.to_string())
-                        })
-                    });
-            }
+        if after
+            .occurrences
+            .iter()
+            .any(|o| o.track.id.starts_with("unavailable_") || o.track.id.is_empty())
+        {
+            return Err(ProviderError::new(
+                ProviderErrorKind::MalformedResponse,
+                SendCertainty::NotSent,
+                "Unresolved playlist occurrences; complete baseline unavailable",
+            ));
         }
-
-        // Paginate continuations in 100-track chunks per D-02
-        while let Some(token) = continuation_token {
-            let url = format!(
-                "https://music.youtube.com/youtubei/v1/browse?continuation={}&type=next",
-                token
-            );
-            let cont_body = json!({
-                "context": Self::client_context(),
-            });
-
-            let cont_res = self
-                .client
-                .post(&url)
-                .headers(headers.clone())
-                .json(&cont_body)
-                .send()
-                .await
-                .map_err(|e| format!("InnerTube continuation failed: {}", e))?;
-
-            if !cont_res.status().is_success() {
-                break;
-            }
-
-            let cont_json: Value = cont_res.json().await.map_err(|e| e.to_string())?;
-
-            let cont_items = cont_json.pointer("/continuationContents/musicPlaylistShelfContinuation/contents")
-                .or_else(|| cont_json.pointer("/continuationContents/musicShelfContinuation/contents"))
-                .or_else(|| cont_json.pointer("/onResponseReceivedActions/0/appendContinuationItemsAction/continuationItems"))
-                .and_then(|c| c.as_array());
-
-            if let Some(items) = cont_items {
-                let mut chunk = Vec::new();
-                for item in items {
-                    let renderer = &item["musicResponsiveListItemRenderer"];
-                    if !renderer.is_null() {
-                        if let Some(track) = Self::parse_list_item_renderer(renderer) {
-                            chunk.push(track);
-                        }
-                    }
-                }
-
-                if !chunk.is_empty() {
-                    if let Some(ref sender) = tx {
-                        let _ = sender.send(chunk.clone()).await;
-                    }
-                    all_tracks.extend(chunk);
-                }
-
-                continuation_token = cont_json.pointer("/continuationContents/musicPlaylistShelfContinuation/continuations/0/nextContinuationData/continuation")
-                    .or_else(|| cont_json.pointer("/continuationContents/musicShelfContinuation/continuations/0/nextContinuationData/continuation"))
-                    .and_then(|c| c.as_str())
-                    .map(|s| s.to_string())
-                    .or_else(|| {
-                        items.iter().find_map(|item| {
-                            item.pointer("/continuationItemRenderer/continuationEndpoint/continuationCommand/token")
-                                .and_then(|t| t.as_str())
-                                .map(|s| s.to_string())
-                        })
-                    });
-            } else {
-                break;
-            }
-        }
-
-        Ok(all_tracks)
+        Ok(after)
     }
 
     async fn search_track(&self, query: &str) -> Result<Vec<SourceTrack>, String> {
@@ -595,7 +809,22 @@ impl MusicProvider for YouTubeMusicProvider {
         playlist_id: &str,
         track_ids: &[String],
     ) -> Result<(), String> {
-        let headers = self.build_headers()?;
+        let outcome = self
+            .add_occurrences(playlist_id, track_ids)
+            .await
+            .map_err(|e| e.to_string())?;
+        if !outcome.all_accepted() {
+            return Err("YouTube Music mutation outcome uncertain: missing occurrence evidence; reconcile before retry".into());
+        }
+        Ok(())
+    }
+
+    async fn add_occurrences(
+        &self,
+        playlist_id: &str,
+        track_ids: &[String],
+    ) -> Result<MutationOutcome, ProviderError> {
+        let headers = self.build_headers().map_err(ProviderError::before_send)?;
         let clean_id = playlist_id.trim_start_matches("VL");
 
         let actions: Vec<Value> = track_ids
@@ -625,29 +854,58 @@ impl MusicProvider for YouTubeMusicProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| format!("InnerTube edit_playlist failed: {}", e))?;
+            .map_err(ProviderError::transport)?;
 
         if !res.status().is_success() {
-            let status = res.status();
-            return Err(format!(
-                "YouTube Music rejected playlist mutation (HTTP {})",
-                status
+            return Err(ProviderError::http(res.status().as_u16(), res.headers()));
+        }
+
+        let json: Value = res.json().await.map_err(|_| {
+            ProviderError::new(
+                ProviderErrorKind::MalformedResponse,
+                SendCertainty::MayHaveApplied,
+                "Invalid mutation response; remote outcome uncertain",
+            )
+        })?;
+
+        Ok(Self::parse_add_outcome(&json, track_ids))
+    }
+
+    fn supports_occurrence_removal(&self) -> bool {
+        true
+    }
+    async fn remove_occurrences(
+        &self,
+        playlist_id: &str,
+        occurrences: &[PlaylistOccurrence],
+        _revision: Option<&str>,
+    ) -> Result<(), ProviderError> {
+        let actions = Self::removal_actions(occurrences)?;
+        let headers = self.build_headers().map_err(ProviderError::before_send)?;
+        let endpoint = "https://music.youtube.com/youtubei/v1/browse/edit_playlist";
+        #[cfg(test)]
+        let endpoint = self.edit_url.as_deref().unwrap_or(endpoint);
+        let response=self.client.post(endpoint).headers(headers).json(&json!({"context":Self::client_context(),"playlistId":playlist_id.trim_start_matches("VL"),"actions":actions})).send().await.map_err(ProviderError::transport)?;
+        if !response.status().is_success() {
+            return Err(ProviderError::http(
+                response.status().as_u16(),
+                response.headers(),
             ));
         }
-
-        let json: Value = res
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse edit_playlist response: {}", e))?;
-
-        if let Some(status) = json.get("status").and_then(|s| s.as_str()) {
-            if status == "STATUS_FAILED" {
-                return Err(
-                    "YouTube Music rejected playlist mutation with STATUS_FAILED".to_string(),
-                );
-            }
+        let value: Value = response.json().await.map_err(|_| {
+            ProviderError::new(
+                ProviderErrorKind::MalformedResponse,
+                SendCertainty::MayHaveApplied,
+                "Invalid removal response; verify remote post-state",
+            )
+        })?;
+        if value["status"].as_str() != Some("STATUS_SUCCEEDED") {
+            return Err(ProviderError::new(
+                ProviderErrorKind::Unknown,
+                SendCertainty::MayHaveApplied,
+                "Removal response uncertain; verify before retry",
+            ));
         }
-
         Ok(())
     }
 
@@ -760,6 +1018,272 @@ mod tests {
             !error.contains("offline_secret"),
             "provider error leaked its raw response: {error}"
         );
+    }
+
+    #[tokio::test]
+    async fn success_without_occurrence_evidence_is_uncertain() {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        let thread = std::thread::spawn(move || {
+            let (mut socket, _) = server.accept().unwrap();
+            let mut request = [0u8; 8192];
+            socket.read(&mut request).unwrap();
+            let body = r#"{"status":"STATUS_SUCCEEDED"}"#;
+            write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+        });
+        let mut provider = YouTubeMusicProvider::new("fixture".into());
+        provider.edit_url = Some(format!("http://{address}"));
+        let result = provider
+            .add_tracks_to_playlist("fixture", &["track".into()])
+            .await;
+        thread.join().unwrap();
+        assert!(
+            result.is_err(),
+            "a top-level success flag cannot prove accepted occurrences"
+        );
+    }
+
+    #[test]
+    fn partial_mutation_response_preserves_occurrence_certainty() {
+        use crate::providers::contracts::OccurrenceStatus;
+        let outcome = YouTubeMusicProvider::parse_add_outcome(
+            &json!({"playlistEditResults":[
+                {"playlistEditVideoAddedResultData":{"videoId":"a","setVideoId":"occurrence-a"}}
+            ]}),
+            &["a".into(), "b".into()],
+        );
+        assert_eq!(outcome.occurrences.len(), 2);
+        assert_eq!(outcome.occurrences[0].status, OccurrenceStatus::Accepted);
+        assert_eq!(
+            outcome.occurrences[0].remote_id.as_deref(),
+            Some("occurrence-a")
+        );
+        assert_eq!(outcome.occurrences[1].status, OccurrenceStatus::Uncertain);
+    }
+
+    #[tokio::test]
+    async fn malformed_playlist_read_is_not_an_empty_success() {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        let thread = std::thread::spawn(move || {
+            let (mut socket, _) = server.accept().unwrap();
+            let mut request = [0u8; 8192];
+            socket.read(&mut request).unwrap();
+            write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}").unwrap();
+        });
+        let mut provider = YouTubeMusicProvider::new("fixture".into());
+        provider.edit_url = Some(format!("http://{address}"));
+        let result = provider.get_playlist_tracks("fixture", None).await;
+        thread.join().unwrap();
+        assert!(
+            result.is_err(),
+            "missing playlist schema must block mutation, not become an empty baseline"
+        );
+    }
+
+    #[tokio::test]
+    async fn repeated_continuation_is_rejected_before_another_request() {
+        use std::io::{Read, Write};
+        use std::sync::{
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+            Arc,
+        };
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        server.set_nonblocking(true).unwrap();
+        let done = Arc::new(AtomicBool::new(false));
+        let stop = done.clone();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counted = calls.clone();
+        let thread = std::thread::spawn(move || {
+            while !stop.load(Ordering::SeqCst) {
+                let Ok((mut socket, _)) = server.accept() else {
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                    continue;
+                };
+                socket.set_nonblocking(false).unwrap();
+                socket
+                    .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                    .unwrap();
+                let mut request = [0u8; 8192];
+                socket.read(&mut request).unwrap();
+                let n = counted.fetch_add(1, Ordering::SeqCst);
+                let body = if n == 0 { json!({"contents":{"twoColumnBrowseResultsRenderer":{"secondaryContents":{"sectionListRenderer":{"contents":[{"musicPlaylistShelfRenderer":{"contents":[],"continuations":[{"nextContinuationData":{"continuation":"repeated"}}]}}]}}}}}) }
+                    else if n == 1 { json!({"continuationContents":{"musicPlaylistShelfContinuation":{"contents":[],"continuations":[{"nextContinuationData":{"continuation":"repeated"}}]}}}) }
+                    else { json!({}) }.to_string();
+                write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+            }
+        });
+        let mut provider = YouTubeMusicProvider::new("fixture".into());
+        provider.edit_url = Some(format!("http://{address}"));
+        let result = provider.get_playlist_tracks("fixture", None).await;
+        done.store(true, Ordering::SeqCst);
+        thread.join().unwrap();
+        assert!(result.is_err());
+        assert!(calls.load(Ordering::SeqCst) <= 2);
+    }
+
+    #[tokio::test]
+    async fn failed_continuation_does_not_return_partial_playlist() {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        let thread = std::thread::spawn(move || {
+            for index in 0..2 {
+                let (mut socket, _) = server.accept().unwrap();
+                let mut request = [0u8; 8192];
+                socket.read(&mut request).unwrap();
+                let body = if index == 0 {
+                    json!({"contents":{"twoColumnBrowseResultsRenderer":{"secondaryContents":{"sectionListRenderer":{"contents":[{"musicPlaylistShelfRenderer":{"contents":[],"continuations":[{"nextContinuationData":{"continuation":"next"}}]}}]}}}}}).to_string()
+                } else {
+                    "{}".into()
+                };
+                let status = if index == 0 {
+                    "200 OK"
+                } else {
+                    "503 Unavailable"
+                };
+                write!(socket,"HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",status,body.len(),body).unwrap();
+            }
+        });
+        let mut provider = YouTubeMusicProvider::new("fixture".into());
+        provider.edit_url = Some(format!("http://{address}"));
+        let result = provider.get_playlist_tracks("fixture", None).await;
+        thread.join().unwrap();
+        assert!(
+            result.is_err(),
+            "partial playlist cannot be used as a complete baseline"
+        );
+    }
+
+    #[tokio::test]
+    async fn unparseable_playlist_occurrence_keeps_its_position() {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        let thread = std::thread::spawn(move || {
+            let (mut socket, _) = server.accept().unwrap();
+            let mut request = [0u8; 8192];
+            socket.read(&mut request).unwrap();
+            let body = json!({"contents":{"twoColumnBrowseResultsRenderer":{"secondaryContents":{"sectionListRenderer":{"contents":[{"musicPlaylistShelfRenderer":{"contents":[{"musicResponsiveListItemRenderer":{}}]}}]}}}}}).to_string();
+            write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+        });
+        let mut provider = YouTubeMusicProvider::new("fixture".into());
+        provider.edit_url = Some(format!("http://{address}"));
+        let tracks = provider.get_playlist_tracks("fixture", None).await.unwrap();
+        thread.join().unwrap();
+        assert_eq!(tracks.len(), 1);
+        assert!(!tracks[0].is_playable);
+        assert_eq!(tracks[0].id, "unavailable_0");
+    }
+
+    #[tokio::test]
+    async fn mutation_returns_typed_rate_limit_with_retry_guidance() {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        let thread = std::thread::spawn(move || {
+            let (mut socket, _) = server.accept().unwrap();
+            let mut request = [0u8; 8192];
+            socket.read(&mut request).unwrap();
+            write!(socket,"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 60\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+        });
+        let mut provider = YouTubeMusicProvider::new("fixture".into());
+        provider.edit_url = Some(format!("http://{address}"));
+        let error = provider
+            .add_occurrences("fixture", &["a".into()])
+            .await
+            .unwrap_err();
+        thread.join().unwrap();
+        assert_eq!(
+            error.kind,
+            crate::providers::error::ProviderErrorKind::RateLimited
+        );
+        assert_eq!(error.retry_after_ms, Some(60_000));
+        assert_eq!(
+            error.certainty,
+            crate::providers::error::SendCertainty::Rejected
+        );
+    }
+
+    #[tokio::test]
+    async fn playlist_read_preserves_youtube_occurrence_identity() {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        let thread = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut socket, _) = server.accept().unwrap();
+                let mut request = [0u8; 8192];
+                socket.read(&mut request).unwrap();
+                let body=json!({"contents":{"twoColumnBrowseResultsRenderer":{"secondaryContents":{"sectionListRenderer":{"contents":[{"musicPlaylistShelfRenderer":{"contents":[{"musicResponsiveListItemRenderer":{"playlistItemData":{"videoId":"a","playlistSetVideoId":"owned-a"},"flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"fixture"}]}}}]}}]}}]}}}}}).to_string();
+                write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+            }
+        });
+        let mut provider = YouTubeMusicProvider::new("fixture".into());
+        provider.edit_url = Some(format!("http://{address}"));
+        let read = provider.read_playlist("fixture").await.unwrap();
+        thread.join().unwrap();
+        assert_eq!(read.occurrences[0].remote_id.as_deref(), Some("owned-a"));
+    }
+
+    #[test]
+    fn removal_payload_targets_an_occurrence_instead_of_every_matching_video() {
+        let track = SourceTrack::unavailable(0);
+        let occurrence = PlaylistOccurrence {
+            index: 1,
+            track: SourceTrack {
+                id: "duplicate".into(),
+                ..track
+            },
+            remote_id: Some("owned-set-id".into()),
+        };
+        let actions = YouTubeMusicProvider::removal_actions(&[occurrence]).unwrap();
+        assert_eq!(
+            actions,
+            json!([{"action":"ACTION_REMOVE_VIDEO","removedVideoId":"duplicate","setVideoId":"owned-set-id"}])
+        );
+    }
+
+    #[tokio::test]
+    async fn structured_read_keeps_http_retry_guidance() {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        let thread = std::thread::spawn(move || {
+            let (mut socket, _) = server.accept().unwrap();
+            let mut request = [0u8; 8192];
+            socket.read(&mut request).unwrap();
+            write!(socket,"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 60\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+        });
+        let mut provider = YouTubeMusicProvider::new("fixture".into());
+        provider.edit_url = Some(format!("http://{address}"));
+        let error = provider.read_playlist("fixture").await.unwrap_err();
+        thread.join().unwrap();
+        assert_eq!(error.kind, ProviderErrorKind::RateLimited);
+        assert_eq!(error.retry_after_ms, Some(60_000));
+        assert_eq!(error.certainty, SendCertainty::NotSent);
+    }
+
+    #[tokio::test]
+    async fn session_canary_preserves_typed_rate_limit_guidance() {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        let thread = std::thread::spawn(move || {
+            let (mut socket, _) = server.accept().unwrap();
+            let mut request = [0u8; 8192];
+            socket.read(&mut request).unwrap();
+            write!(socket,"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 60\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+        });
+        let mut provider = YouTubeMusicProvider::new("fixture".into());
+        provider.edit_url = Some(format!("http://{address}"));
+        let error = provider.check_session().await.unwrap_err();
+        thread.join().unwrap();
+        assert_eq!(error.kind, ProviderErrorKind::RateLimited);
+        assert_eq!(error.retry_after_ms, Some(60_000));
     }
 
     #[test]

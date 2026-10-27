@@ -11,3 +11,5 @@ pub use error::{
 pub use spotify::SpotifyProvider;
 pub use traits::MusicProvider;
 pub use ytmusic::YouTubeMusicProvider;
+
+pub mod contracts;

@@ -1,11 +1,14 @@
 use crate::engine::lifecycle::JobState;
 pub use crate::engine::lifecycle::TransferControl;
+#[cfg(test)]
+use crate::engine::snapshot::audit_playlist;
 use crate::engine::snapshot::{
-    audit_playlist, create_pre_mutation_snapshot, record_operation_intent,
-    update_operation_outcome, AuditResult, OperationOutcome,
+    create_pre_mutation_snapshot, record_operation_intent, update_operation_outcome, AuditResult,
+    OperationOutcome,
 };
 use crate::models::SourceTrack;
-use crate::providers::error::{classify_error, retry_delay_ms, ProviderErrorKind};
+use crate::providers::contracts::{MutationOutcome, OccurrenceOutcome, OccurrenceStatus};
+use crate::providers::error::{retry_delay_ms, ProviderErrorKind, SendCertainty};
 use crate::providers::traits::MusicProvider;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
@@ -74,14 +77,14 @@ pub struct BatchTransferSummary {
     pub audit: Option<AuditResult>,
     pub state: String,
     pub event_seq: u64,
+    pub counts: crate::engine::recovery::RecoveryCounts,
+    pub verification: String,
+    pub error: Option<String>,
 }
 
-pub fn resolve_concurrency(target_service: &str, requested_concurrency: usize) -> usize {
-    if target_service == "ytmusic" {
-        1
-    } else {
-        requested_concurrency.clamp(1, 8)
-    }
+pub fn resolve_concurrency(_target_service: &str, _requested_concurrency: usize) -> usize {
+    // Appends are non-commutative. Search/matching remains concurrent.
+    1
 }
 
 fn strip_parentheticals(s: &str) -> String {
@@ -189,6 +192,59 @@ fn consume_retry_budget(budget: &AtomicU32) -> bool {
     }
 }
 
+struct PlannedBatch {
+    operation_index: usize,
+    source_indices: Vec<usize>,
+    tracks: Vec<SourceTrack>,
+}
+
+fn plan_batches(
+    conn: &rusqlite::Connection,
+    config: &BatchTransferConfig,
+    before: &[SourceTrack],
+) -> Result<Vec<PlannedBatch>, String> {
+    let mut pool = before.to_vec();
+    let mut selected = Vec::new();
+    let mut skipped = Vec::new();
+    for (index, track) in config.tracks.iter().enumerate() {
+        if config.skip_duplicates && is_duplicate_track(track, &pool) {
+            skipped.push(index);
+        } else {
+            pool.push(track.clone());
+            selected.push((index, track.clone()));
+        }
+    }
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "UPDATE transfer_jobs SET skipped_indices_json=?1 WHERE job_id=?2",
+        rusqlite::params![
+            serde_json::to_string(&skipped).map_err(|e| e.to_string())?,
+            config.job_id
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    let size = if config.target_service == "ytmusic" {
+        10
+    } else {
+        25
+    };
+    let mut batches = Vec::new();
+    for (operation_index, chunk) in selected.chunks(size).enumerate() {
+        let source_indices: Vec<usize> = chunk.iter().map(|p| p.0).collect();
+        let tracks: Vec<SourceTrack> = chunk.iter().map(|p| p.1.clone()).collect();
+        let ids: Vec<String> = tracks.iter().map(|t| t.id.clone()).collect();
+        let id = record_operation_intent(&tx, &config.job_id, operation_index, &ids)?;
+        tx.execute("UPDATE transfer_operations SET evidence_version=2,source_indices_json=?1 WHERE operation_id=?2",rusqlite::params![serde_json::to_string(&source_indices).map_err(|e|e.to_string())?,id]).map_err(|e|e.to_string())?;
+        batches.push(PlannedBatch {
+            operation_index,
+            source_indices,
+            tracks,
+        });
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(batches)
+}
+
 struct ChunkWorkerContext {
     job_id: String,
     target_id: String,
@@ -207,11 +263,16 @@ struct ChunkWorkerContext {
     added_ids: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
+fn checkpoint_cancelled_unsent(conn: &rusqlite::Connection, id: &str) -> Result<(), String> {
+    conn.execute("UPDATE transfer_operations SET status='failed',certainty='failed' WHERE operation_id=?1 AND sent_at IS NULL AND status='pending'",[id]).map_err(|_|"Cancellation checkpoint unavailable")?;
+    Ok(())
+}
+
 /// Persist intent before the send and a checkpoint before reporting success.
 /// Transport/partial outcomes are never replayed automatically. Presence in a
 /// playlist cannot establish whether this operation added a new occurrence.
 #[allow(clippy::too_many_arguments)]
-async fn journaled_add(
+pub(crate) async fn journaled_add(
     db: &std::sync::Mutex<rusqlite::Connection>,
     provider: &dyn MusicProvider,
     job_id: &str,
@@ -225,90 +286,239 @@ async fn journaled_add(
         let conn = db
             .lock()
             .map_err(|_| "Database lock unavailable; no mutation sent")?;
-        record_operation_intent(&conn, job_id, operation_index, ids)?
+        use rusqlite::OptionalExtension;
+        let id = format!("op_{}_{}", job_id, operation_index);
+        let existing: Option<(String, Option<String>, Option<i64>)> = conn
+            .query_row(
+                "SELECT status,payload_json,sent_at FROM transfer_operations WHERE operation_id=?1",
+                [&id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if let Some((status, payload, sent)) = existing {
+            let recorded: Vec<String> =
+                serde_json::from_str(payload.as_deref().ok_or("Missing durable payload")?)
+                    .map_err(|e| e.to_string())?;
+            if status != "pending" || sent.is_some() || recorded != ids {
+                return Err(
+                    "Recorded operation cannot be replayed; inspect recovery evidence".into(),
+                );
+            }
+            id
+        } else {
+            let id = record_operation_intent(&conn, job_id, operation_index, ids)?;
+            conn.execute(
+                "UPDATE transfer_operations SET evidence_version=2 WHERE operation_id=?1",
+                [&id],
+            )
+            .map_err(|e| e.to_string())?;
+            id
+        }
     };
     #[cfg(test)]
     safety_tests::crash_point("intent");
-    for attempt in 0..=5 {
+    let previous_attempts: u32 = db
+        .lock()
+        .map_err(|_| "Attempt metadata unavailable")?
+        .query_row(
+            "SELECT attempt_count FROM transfer_operations WHERE operation_id=?1",
+            [&operation_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    let mut attempt = 0;
+    loop {
         let Some(permit) = control.reserve_mutation().await? else {
             let conn = db
                 .lock()
                 .map_err(|_| "Cancelled mutation checkpoint unavailable")?;
-            update_operation_outcome(
-                &conn,
-                &operation_id,
-                OperationOutcome::Failed,
-                attempt,
-                Some("cancelled before send"),
-            )?;
+            checkpoint_cancelled_unsent(&conn, &operation_id)?;
             return Ok(false);
         };
-        let response = provider.add_tracks_to_playlist(target_id, ids).await;
+        if let Err(error) = provider.check_session().await {
+            let conn = db
+                .lock()
+                .map_err(|_| "Preflight outcome checkpoint unavailable")?;
+            conn.execute("UPDATE transfer_operations SET provider_response=?1,status='failed',certainty='failed',updated_at=?2 WHERE operation_id=?3",rusqlite::params![serde_json::to_string(&error).map_err(|e|e.to_string())?,chrono::Utc::now().timestamp(),operation_id]).map_err(|_|"Preflight failure checkpoint unavailable")?;
+            return Err(error.to_string());
+        }
+        let before = provider
+            .read_playlist(target_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        if control.is_stopping() {
+            let conn = db
+                .lock()
+                .map_err(|_| "Cancelled preflight checkpoint unavailable")?;
+            checkpoint_cancelled_unsent(&conn, &operation_id)?;
+            drop(conn);
+            permit.checkpointed()?;
+            return Ok(false);
+        }
+        if control.snapshot()?.state != JobState::Running {
+            permit.checkpointed()?;
+            continue;
+        }
+        if !before.complete {
+            return Err("Incomplete destination baseline; no mutation sent".into());
+        }
+        {
+            let conn = db
+                .lock()
+                .map_err(|_| "Mutation send marker unavailable; no send")?;
+            if let Some(revision) =
+                crate::engine::snapshot::latest_playlist_revision(&conn, job_id)?
+            {
+                if before.revision.as_deref() != Some(revision.as_str()) {
+                    return Err("Destination revision changed since the durable checkpoint; no mutation sent".into());
+                }
+            }
+            let snapshot =
+                crate::engine::snapshot::load_snapshot(&conn, &format!("snap_{}", job_id))?;
+            let mut expected = snapshot.pre_existing_track_ids;
+            expected.extend(snapshot.added_track_ids);
+            let canonical = |ids: Vec<String>| {
+                ids.into_iter()
+                    .map(|id| id.trim_start_matches("spotify:track:").to_string())
+                    .collect::<Vec<_>>()
+            };
+            if canonical(before.ids()) != canonical(expected) {
+                return Err("Destination changed since the durable baseline; no mutation sent, manual review required".into());
+            }
+            conn.execute("UPDATE transfer_operations SET before_json=?1,evidence_version=2 WHERE operation_id=?2",rusqlite::params![serde_json::to_string(&before).map_err(|e|e.to_string())?,operation_id]).map_err(|_|"Before-state checkpoint failed; no send")?;
+            conn.execute(
+                "UPDATE transfer_operations SET sent_at=?1 WHERE operation_id=?2",
+                rusqlite::params![chrono::Utc::now().timestamp(), operation_id],
+            )
+            .map_err(|_| "Mutation send marker failed; no send")?;
+        }
+        let response = provider.add_occurrences(target_id, ids).await;
         #[cfg(test)]
         safety_tests::crash_point("response");
         match response {
-            Ok(()) => {
+            Ok(mut outcome) => {
+                if !outcome.matches_payload(ids) {
+                    outcome = MutationOutcome {
+                        occurrences: ids
+                            .iter()
+                            .enumerate()
+                            .map(|(index, id)| OccurrenceOutcome {
+                                index,
+                                track_id: id.clone(),
+                                status: OccurrenceStatus::Uncertain,
+                                remote_id: None,
+                            })
+                            .collect(),
+                        revision: None,
+                    };
+                }
+                let complete = outcome.all_accepted();
                 {
                     let conn = db.lock().map_err(|_| {
                         "Remote write accepted but checkpoint unavailable; recovery required"
                     })?;
+                    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
                     update_operation_outcome(
-                        &conn,
+                        &tx,
                         &operation_id,
-                        OperationOutcome::Confirmed,
-                        attempt + 1,
+                        if complete {
+                            OperationOutcome::Confirmed
+                        } else {
+                            OperationOutcome::Ambiguous
+                        },
+                        previous_attempts + attempt + 1,
                         Some("accepted"),
                     )
                     .map_err(|_| {
                         "Remote write accepted but checkpoint failed; recovery required".to_string()
                     })?;
+                    tx.execute(
+                        "UPDATE transfer_operations SET outcome_json=?1 WHERE operation_id=?2",
+                        rusqlite::params![
+                            serde_json::to_string(&outcome).map_err(|e| e.to_string())?,
+                            operation_id
+                        ],
+                    )
+                    .map_err(|_| "Outcome evidence checkpoint failed; recovery required")?;
+                    tx.commit()
+                        .map_err(|_| "Outcome evidence commit failed; recovery required")?;
                 }
                 #[cfg(test)]
                 safety_tests::crash_point("checkpoint");
+                if !complete {
+                    control.fail("Partial or uncertain mutation; accepted occurrences saved, reconcile before retry")?;
+                }
                 permit.checkpointed()?;
+                if !complete {
+                    return Err("Partial or uncertain mutation; reconcile recorded occurrences before retry".into());
+                }
                 return Ok(true);
             }
             Err(error) => {
-                let kind = classify_error(&error);
+                let kind = error.kind;
                 let rejected = matches!(
-                    kind,
-                    ProviderErrorKind::RateLimited
-                        | ProviderErrorKind::Authentication
-                        | ProviderErrorKind::Permission
+                    error.certainty,
+                    SendCertainty::NotSent | SendCertainty::Rejected
                 );
                 {
                     let conn = db
                         .lock()
                         .map_err(|_| "Mutation outcome could not be saved; recovery required")?;
+                    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
                     update_operation_outcome(
-                        &conn,
+                        &tx,
                         &operation_id,
                         if rejected {
                             OperationOutcome::Failed
                         } else {
                             OperationOutcome::Ambiguous
                         },
-                        attempt + 1,
+                        previous_attempts + attempt + 1,
                         Some(if rejected {
                             "provider rejected mutation"
                         } else {
                             "remote outcome uncertain"
                         }),
                     )?;
+                    let outcome = MutationOutcome {
+                        occurrences: ids
+                            .iter()
+                            .enumerate()
+                            .map(|(index, id)| OccurrenceOutcome {
+                                index,
+                                track_id: id.clone(),
+                                status: if rejected {
+                                    OccurrenceStatus::Rejected
+                                } else {
+                                    OccurrenceStatus::Uncertain
+                                },
+                                remote_id: None,
+                            })
+                            .collect(),
+                        revision: None,
+                    };
+                    tx.execute("UPDATE transfer_operations SET outcome_json=?1,provider_response=?2 WHERE operation_id=?3",rusqlite::params![serde_json::to_string(&outcome).map_err(|e|e.to_string())?,serde_json::to_string(&error).map_err(|e|e.to_string())?,operation_id]).map_err(|_|"Failure evidence checkpoint failed")?;
+                    tx.commit()
+                        .map_err(|_| "Failure evidence commit failed; recovery required")?;
                 }
                 if !rejected {
                     control.fail("Remote mutation outcome is uncertain. Automatic replay stopped; manual reconciliation required.")?;
                 }
                 permit.checkpointed()?;
                 if kind == ProviderErrorKind::RateLimited
+                    && error.certainty == SendCertainty::Rejected
                     && attempt < 5
                     && consume_retry_budget(retry_budget)
                 {
+                    let delay = retry_delay_ms(attempt, error.retry_after_ms);
+                    if delay > 30_000 {
+                        return Err("Provider retry delay exceeds automatic wait limit; operation deferred, retry later".into());
+                    }
                     control
-                        .interruptible_delay(std::time::Duration::from_millis(retry_delay_ms(
-                            attempt, None,
-                        )))
+                        .interruptible_delay(std::time::Duration::from_millis(delay))
                         .await;
+                    attempt += 1;
                     continue;
                 }
                 return Err(if rejected {
@@ -319,7 +529,6 @@ async fn journaled_add(
             }
         }
     }
-    unreachable!("bounded retry loop always returns")
 }
 
 async fn process_chunk(ctx: ChunkWorkerContext) -> Result<(), String> {
@@ -395,6 +604,7 @@ async fn prepare_transfer(
     config: &BatchTransferConfig,
     control: &TransferControl,
 ) -> Result<(String, String, Vec<SourceTrack>), String> {
+    provider.check_session().await.map_err(|e| e.to_string())?;
     let total = config.tracks.len();
     let target_name = config
         .target_playlist_name
@@ -409,14 +619,26 @@ async fn prepare_transfer(
             .filter(|id| !id.trim().is_empty())
             .ok_or("Target playlist ID required for append mode")?
     };
-    let pre_existing_tracks = if config.is_new_playlist {
-        Vec::new()
+    let baseline = if config.is_new_playlist {
+        crate::providers::contracts::PlaylistRead {
+            occurrences: vec![],
+            revision: None,
+            complete: true,
+        }
     } else {
         provider
-            .get_playlist_tracks(&initial_target, None)
+            .read_playlist(&initial_target)
             .await
-            .map_err(|_| "Destination baseline read failed. No mutation was sent.".to_string())?
+            .map_err(|_| "Destination baseline read failed. No mutation was sent.")?
     };
+    if !baseline.complete {
+        return Err("Incomplete destination baseline; no mutation sent".into());
+    }
+    let pre_existing_tracks: Vec<SourceTrack> = baseline
+        .occurrences
+        .iter()
+        .map(|o| o.track.clone())
+        .collect();
     if config.target_service == "ytmusic" && !config.skip_duplicates {
         let mut seen: std::collections::HashSet<&str> =
             pre_existing_tracks.iter().map(|t| t.id.as_str()).collect();
@@ -450,8 +672,12 @@ async fn prepare_transfer(
         let conn = db.lock().map_err(|e| e.to_string())?;
         let manifest = serde_json::to_string(&config).map_err(|e| e.to_string())?;
         conn.execute(
-            "UPDATE transfer_jobs SET manifest_json = ?1 WHERE job_id = ?2",
-            rusqlite::params![manifest, config.job_id],
+            "UPDATE transfer_jobs SET manifest_json = ?1,target_fingerprint=?3 WHERE job_id = ?2",
+            rusqlite::params![
+                manifest,
+                config.job_id,
+                serde_json::json!({"revision":baseline.revision,"ids":baseline.ids()}).to_string()
+            ],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -465,7 +691,7 @@ async fn prepare_transfer(
                 usize::MAX / 2,
                 std::slice::from_ref(&target_name),
             )?;
-            conn.execute("UPDATE transfer_operations SET operation_type = 'create_playlist' WHERE operation_id = ?1", [&id])
+            conn.execute("UPDATE transfer_operations SET operation_type = 'create_playlist',evidence_version=2 WHERE operation_id = ?1", [&id])
                     .map_err(|e| e.to_string())?;
             id
         };
@@ -573,56 +799,12 @@ impl TransferWorkerPool {
             .map(|track| track.id.clone())
             .collect();
 
-        // Deduplication phase: filter duplicate tracks if skip_duplicates is enabled
-        let (tracks_to_transfer, skipped_duplicates) = if config.skip_duplicates {
-            let mut deduplicated = Vec::new();
-            let mut skipped = 0usize;
-            let mut existing_pool = pre_existing_tracks.clone();
-
-            for track in config.tracks {
-                if is_duplicate_track(&track, &existing_pool) {
-                    skipped += 1;
-                    let log = TransferLogPayload {
-                        job_id: config.job_id.clone(),
-                        timestamp: chrono::Utc::now().timestamp(),
-                        worker_id: 0,
-                        message: format!(
-                            "Skipped duplicate track '{}' - {}",
-                            track.title,
-                            track.artists.join(", ")
-                        ),
-                        level: "info".to_string(),
-                    };
-                    dispatch_transfer_log(log, |payload| {
-                        let _ = self.app.emit("transfer:log", payload);
-                    });
-                } else {
-                    existing_pool.push(track.clone());
-                    deduplicated.push(track);
-                }
-            }
-
-            if skipped > 0 {
-                let log = TransferLogPayload {
-                    job_id: config.job_id.clone(),
-                    timestamp: chrono::Utc::now().timestamp(),
-                    worker_id: 0,
-                    message: format!(
-                        "Deduplication complete: skipped {} duplicate track(s). Transferring {} remaining track(s).",
-                        skipped,
-                        deduplicated.len()
-                    ),
-                    level: "info".to_string(),
-                };
-                dispatch_transfer_log(log, |payload| {
-                    let _ = self.app.emit("transfer:log", payload);
-                });
-            }
-
-            (deduplicated, skipped)
-        } else {
-            (config.tracks, 0usize)
+        let batches = {
+            let conn = self.db.lock().map_err(|e| e.to_string())?;
+            plan_batches(&conn, &config, &pre_existing_tracks)?
         };
+        let selected_count: usize = batches.iter().map(|b| b.tracks.len()).sum();
+        let skipped_duplicates = total - selected_count;
 
         // Stage 4: Chunked batch execution with true Tokio concurrency and retry
         let concurrency = resolve_concurrency(&config.target_service, config.concurrency);
@@ -646,28 +828,18 @@ impl TransferWorkerPool {
         let successful_count = Arc::new(AtomicUsize::new(0));
         let failed_count = Arc::new(AtomicUsize::new(0));
         let retry_budget = Arc::new(AtomicU32::new(20));
-        let added_ids = Arc::new(std::sync::Mutex::new(Vec::with_capacity(
-            tracks_to_transfer.len(),
-        )));
-
-        // YouTube Music batches up to ~25 actions per edit_playlist request.
-        // We chunk at 10 tracks to remain safely below truncation limits while avoiding
-        // hundreds of individual HTTP requests that trigger server socket resets.
-        let chunk_size = if config.target_service == "ytmusic" {
-            10
-        } else {
-            25
-        };
-        let chunks: Vec<Vec<SourceTrack>> = tracks_to_transfer
-            .chunks(chunk_size)
-            .map(|c| c.to_vec())
-            .collect();
+        let added_ids = Arc::new(std::sync::Mutex::new(Vec::with_capacity(selected_count)));
 
         let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency));
         let mut join_set = tokio::task::JoinSet::new();
         let errors = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
 
-        for (chunk_idx, chunk) in chunks.into_iter().enumerate() {
+        for batch in batches {
+            if batch.source_indices.len() != batch.tracks.len() {
+                return Err("Invalid durable batch occurrence mapping".into());
+            }
+            let chunk_idx = batch.operation_index;
+            let chunk = batch.tracks;
             if control.is_stopping() {
                 break;
             }
@@ -773,7 +945,7 @@ impl TransferWorkerPool {
             });
 
             return Ok(BatchTransferSummary {
-                job_id: config.job_id,
+                job_id: config.job_id.clone(),
                 snapshot_id,
                 target_playlist_id: target_id,
                 total_tracks: total,
@@ -784,6 +956,13 @@ impl TransferWorkerPool {
                 audit: None,
                 state: final_state.state.as_str().into(),
                 event_seq: final_state.event_seq,
+                counts: crate::engine::recovery::inspect_job(
+                    &*self.db.lock().map_err(|_| "Summary storage unavailable")?,
+                    &config.job_id,
+                )?
+                .counts,
+                verification: "unavailable".into(),
+                error: None,
             });
         }
 
@@ -801,12 +980,24 @@ impl TransferWorkerPool {
 
         let mut expected_ids = pre_existing_ids;
         expected_ids.extend(final_added_ids);
-        let audit = audit_playlist(provider.as_ref().as_ref(), &target_id, &expected_ids)
-            .await
-            .map_err(|_| {
-                "Transfer writes checkpointed, but verification read failed; recovery required"
-                    .to_string()
-            })?;
+        let revision = {
+            let conn = self
+                .db
+                .lock()
+                .map_err(|_| "Verification storage unavailable")?;
+            crate::engine::snapshot::latest_playlist_revision(&conn, &config.job_id)?
+        };
+        let audit = crate::engine::snapshot::audit_playlist_at_revision(
+            provider.as_ref().as_ref(),
+            &target_id,
+            &expected_ids,
+            revision.as_deref(),
+        )
+        .await
+        .map_err(|_| {
+            "Transfer writes checkpointed, but verification read failed; recovery required"
+                .to_string()
+        })?;
         if !audit.is_verified {
             return Err(format!("Transfer verification found {} missing occurrence(s); manual reconciliation required", audit.missing_ids.len()));
         }
@@ -855,7 +1046,7 @@ impl TransferWorkerPool {
         let _ = self.app.emit("transfer:progress", complete_payload);
 
         Ok(BatchTransferSummary {
-            job_id: config.job_id,
+            job_id: config.job_id.clone(),
             snapshot_id,
             target_playlist_id: target_id,
             total_tracks: total,
@@ -866,6 +1057,13 @@ impl TransferWorkerPool {
             audit: audit_result,
             state: final_state.state.as_str().into(),
             event_seq: final_state.event_seq,
+            counts: crate::engine::recovery::inspect_job(
+                &*self.db.lock().map_err(|_| "Summary storage unavailable")?,
+                &config.job_id,
+            )?
+            .counts,
+            verification: "verified".into(),
+            error: None,
         })
     }
 }
@@ -882,11 +1080,11 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_concurrency_preserves_other_services() {
-        assert_eq!(resolve_concurrency("spotify", 8), 8);
-        assert_eq!(resolve_concurrency("spotify", 4), 4);
+    fn test_resolve_concurrency_serializes_other_services() {
+        assert_eq!(resolve_concurrency("spotify", 8), 1);
+        assert_eq!(resolve_concurrency("spotify", 4), 1);
         assert_eq!(resolve_concurrency("spotify", 0), 1);
-        assert_eq!(resolve_concurrency("spotify", 16), 8);
+        assert_eq!(resolve_concurrency("spotify", 16), 1);
     }
 
     fn sample_track(id: &str, title: &str, artists: Vec<&str>, isrc: Option<&str>) -> SourceTrack {

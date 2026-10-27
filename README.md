@@ -32,7 +32,7 @@
 
 SoundShift is a fast, local desktop app that moves your music playlists between **Spotify** and **YouTube Music**.
 
-Most playlist transfer tools require paid monthly subscriptions, ask for third-party cloud access, or demand that you manually copy API tokens from browser developer tools. SoundShift takes a different approach: it runs **100% locally on your computer**, connects through native login windows, lets you preview every match before anything changes, and lets you undo any transfer with a single click.
+Most playlist transfer tools require paid monthly subscriptions, ask for third-party cloud access, or demand that you manually copy API tokens from browser developer tools. SoundShift runs **100% locally on your computer**, connects through native login windows, lets you preview matches before writes, and records transfer history for explicit recovery and guarded rollback.
 
 > **Metadata only:** SoundShift transfers playlist track metadata (titles, artists, and album info). It never downloads, rips, or streams audio files.
 
@@ -50,13 +50,13 @@ Never wonder what got transferred. Before a single song is added to your destina
 - **Unresolved / Missing (Red)**: Clearly highlighted so you know exactly which tracks need attention.
 
 ### 1-Click Snapshot Rollback
-Accidentally added tracks to the wrong playlist or changed your mind? Every transfer automatically records an immutable snapshot of your playlist before making changes. Restore your original playlist anytime from the Transfer History screen.
+Every transfer records an immutable snapshot and a durable mutation journal before writes. Transfer History lets you inspect outcomes, reconcile uncertain work, resume proven unsent or rejected operations, and request rollback. Rollback requires attributable occurrences and verified remote post-state. Legacy records and unsupported provider capabilities stop for manual review; whole-playlist deletion is refused when independent removal verification is unavailable.
 
 ### Smart Deduplication
 Merging into a playlist you already use? SoundShift checks existing songs in the destination by ID, ISRC, and title/artist, skipping tracks that are already there so you do not end up with duplicates.
 
 ### Concurrent Worker Engine
-Powered by Tokio and Rust, transfers run with user-selectable worker concurrency (1 to 8 workers), adaptive rate limiting, exponential backoff, and live real-time progress logs.
+Powered by Tokio and Rust, matching runs concurrently while destination playlist writes run in order with one writer. Transfers use bounded retry budgets, provider retry guidance, interruptible waits, and live progress logs. Confirmed operations are never automatically replayed.
 
 ### 100% Private & Local-First
 Zero cloud servers. Zero analytics or tracking beacons. Your tokens, snapshots, and playlist history stay entirely inside local SQLite storage on your machine.
@@ -70,7 +70,7 @@ Zero cloud servers. Zero analytics or tracking beacons. Your tokens, snapshots, 
 | **Spotify** | Yes | Yes | Yes | Yes | Native WebView session |
 | **YouTube Music** | Yes | Yes | Yes | Yes | Native WebView session |
 
-*Note: YouTube Music playlist mutations enforce single-writer consistency to avoid server conflict collisions.*
+*Playlist writes are serialized for both providers. YouTube Music duplicate-occurrence preservation remains unsupported: disable deduplication only for selections without duplicate destination IDs; unsupported cases are refused before mutation.*
 
 ---
 
@@ -85,9 +85,9 @@ Zero cloud servers. Zero analytics or tracking beacons. Your tokens, snapshots, 
          |
 [4. Visual Staging]    -> Review exact and ambiguous matches before transferring
          |
-[5. Batch Transfer]    -> Concurrent worker tasks with deduplication and live telemetry
+[5. Batch Transfer]    -> Ordered playlist writes with deduplication and live telemetry
          |
-[6. Snapshot Safety]   -> Pre-mutation state saved in SQLite with 1-click rollback
+[6. Snapshot Safety]   -> Durable outcomes, explicit recovery, and guarded rollback
 ```
 
 ---

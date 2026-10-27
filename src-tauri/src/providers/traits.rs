@@ -1,5 +1,8 @@
 use crate::models::{Playlist, SourceTrack};
-use crate::providers::error::ReconciliationResult;
+use crate::providers::contracts::{MutationOutcome, PlaylistOccurrence, PlaylistRead};
+use crate::providers::error::{
+    ProviderError, ProviderErrorKind, ReconciliationResult, SendCertainty,
+};
 use async_trait::async_trait;
 
 #[async_trait]
@@ -27,6 +30,97 @@ pub trait MusicProvider: Send + Sync {
         track_ids: &[String],
     ) -> Result<(), String>;
     async fn delete_playlist(&self, playlist_id: &str) -> Result<(), String>;
+
+    async fn playlist_revision(&self, _playlist_id: &str) -> Result<Option<String>, ProviderError> {
+        Ok(None)
+    }
+
+    /// Two complete reads detect observable drift; absent revision/occurrence evidence
+    /// never grants permission to attribute an ambiguous mutation or remove duplicates.
+    async fn read_playlist(&self, playlist_id: &str) -> Result<PlaylistRead, ProviderError> {
+        let before_revision = self.playlist_revision(playlist_id).await?;
+        let before = self
+            .get_playlist_tracks(playlist_id, None)
+            .await
+            .map_err(ProviderError::before_send)?;
+        let after = self
+            .get_playlist_tracks(playlist_id, None)
+            .await
+            .map_err(ProviderError::before_send)?;
+        let revision = self.playlist_revision(playlist_id).await?;
+        if before_revision != revision
+            || before.len() != after.len()
+            || before.iter().zip(&after).any(|(a, b)| a.id != b.id)
+        {
+            return Err(ProviderError::new(
+                ProviderErrorKind::Conflict,
+                SendCertainty::NotSent,
+                "Playlist changed during read; no mutation sent",
+            ));
+        }
+        if after
+            .iter()
+            .any(|t| t.id.is_empty() || t.id.starts_with("unavailable_"))
+        {
+            return Err(ProviderError::new(
+                ProviderErrorKind::MalformedResponse,
+                SendCertainty::NotSent,
+                "Playlist contains unresolved occurrences; complete baseline unavailable",
+            ));
+        }
+        Ok(PlaylistRead {
+            occurrences: after
+                .into_iter()
+                .enumerate()
+                .map(|(index, track)| PlaylistOccurrence {
+                    index,
+                    track,
+                    remote_id: None,
+                })
+                .collect(),
+            revision,
+            complete: true,
+        })
+    }
+
+    /// Defaults refuse unsupported writes; legacy success is not occurrence evidence.
+    async fn add_occurrences(
+        &self,
+        _playlist_id: &str,
+        _ids: &[String],
+    ) -> Result<MutationOutcome, ProviderError> {
+        Err(ProviderError::new(
+            ProviderErrorKind::Unknown,
+            SendCertainty::NotSent,
+            "Provider occurrence outcomes are unsupported; no mutation sent",
+        ))
+    }
+
+    fn supports_occurrence_removal(&self) -> bool {
+        false
+    }
+    async fn remove_occurrences(
+        &self,
+        _playlist_id: &str,
+        _occurrences: &[PlaylistOccurrence],
+        _revision: Option<&str>,
+    ) -> Result<(), ProviderError> {
+        Err(ProviderError::new(
+            ProviderErrorKind::Unknown,
+            SendCertainty::NotSent,
+            "Exact occurrence removal unavailable; manual review required",
+        ))
+    }
+    fn supports_verified_deletion(&self) -> bool {
+        false
+    }
+    async fn verify_playlist_removed(&self, _playlist_id: &str) -> Result<bool, ProviderError> {
+        Ok(false)
+    }
+
+    async fn check_session(&self) -> Result<(), ProviderError> {
+        self.canary().await.map_err(ProviderError::before_send)
+    }
 
     /// Performs a low-cost live check. Implementations may override this with a
     /// provider-specific endpoint; the default deliberately exercises auth.

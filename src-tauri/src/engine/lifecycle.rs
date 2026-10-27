@@ -18,6 +18,10 @@ pub enum JobState {
     Cancelled,
     CompletedVerified,
     RecoveryRequired,
+    Reconciling,
+    ManualReview,
+    RollingBack,
+    RolledBack,
 }
 
 impl JobState {
@@ -31,12 +35,20 @@ impl JobState {
             Self::Cancelled => "cancelled",
             Self::CompletedVerified => "completed_verified",
             Self::RecoveryRequired => "recovery_required",
+            Self::Reconciling => "reconciling",
+            Self::ManualReview => "manual_review",
+            Self::RollingBack => "rolling_back",
+            Self::RolledBack => "rolled_back",
         }
     }
     fn terminal(self) -> bool {
         matches!(
             self,
-            Self::Cancelled | Self::CompletedVerified | Self::RecoveryRequired
+            Self::Cancelled
+                | Self::CompletedVerified
+                | Self::RecoveryRequired
+                | Self::ManualReview
+                | Self::RolledBack
         )
     }
 }

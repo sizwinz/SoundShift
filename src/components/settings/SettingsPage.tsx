@@ -21,7 +21,7 @@ export interface SoundShiftSettings {
 }
 
 export const defaultSettings: SoundShiftSettings = {
-  concurrency: 4,
+  concurrency: 1,
   confirmBeforeTransfer: true,
   reducedMotion: false,
   keepTransferLogs: true,
@@ -72,7 +72,7 @@ export function SettingsPage() {
             <span>Settings & Preferences</span>
           </h1>
           <p className="mt-0.5 text-xs text-zinc-400">
-            Control transfer concurrency and local client preferences. All configuration is strictly local.
+            Configure local client preferences. Playlist writes use one writer to preserve order.
           </p>
         </div>
 
@@ -94,7 +94,7 @@ export function SettingsPage() {
               </div>
               <div>
                 <h2 className="text-sm font-semibold text-zinc-100">Transfer Performance</h2>
-                <p className="mt-0.5 text-xs text-zinc-400">Tune how many provider network requests execute in parallel.</p>
+                <p className="mt-0.5 text-xs text-zinc-400">Destination writes run in order; matching can run concurrently.</p>
               </div>
             </div>
 
@@ -103,22 +103,21 @@ export function SettingsPage() {
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-medium text-zinc-200">Concurrent Workers</span>
                   <span className="rounded-md bg-white/[0.06] border border-white/[0.08] px-2.5 py-0.5 font-mono text-emerald-400 tabular-nums">
-                    {settings.concurrency} workers
+                    1 writer
                   </span>
                 </div>
                 <input
                   type="range"
                   min="1"
-                  max="8"
-                  value={settings.concurrency}
-                  onChange={(event) => update("concurrency", Number(event.target.value))}
+                  max="1"
+                  value={1}
+                  disabled
+                  readOnly
                   className="mt-3 h-1.5 w-full cursor-pointer accent-emerald-500"
                   aria-label="Concurrent workers"
                 />
                 <div className="mt-2 flex justify-between text-[11px] font-mono text-zinc-500">
-                  <span>1 (safest)</span>
-                  <span>4 (recommended)</span>
-                  <span>8 (fastest)</span>
+                  <span>One ordered playlist writer</span>
                 </div>
               </label>
 
@@ -175,7 +174,7 @@ export function SettingsPage() {
             <div className="flex flex-col gap-3 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <div className="text-xs font-semibold text-zinc-200">Reset default preferences</div>
-                <p className="mt-0.5 text-xs text-zinc-400">Restore worker concurrency and interface options to initial defaults.</p>
+                <p className="mt-0.5 text-xs text-zinc-400">Restore interface options to initial defaults.</p>
               </div>
               <Button
                 variant="secondary"

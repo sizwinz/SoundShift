@@ -11,6 +11,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { TransferHistoryEntry, AuditResult } from "../../types/transfer";
+import { RecoveryActions } from "./RecoveryActions";
 import { RollbackModal } from "./RollbackModal";
 import { isTauri } from "../../utils/tauri";
 import { Card, Button, Badge } from "../ui";
@@ -295,6 +296,7 @@ export const TransferHistory: React.FC<TransferHistoryProps> = ({
                     )}
                   </div>
                 </div>
+                {(!entry.is_rolled_back || entry.recovery_required) && <RecoveryActions jobId={entry.job_id} onRollback={()=>setActiveRollbackSnapshot(entry)} onChanged={inspection=>setHistory(previous=>previous.map(item=>item.job_id===inspection.job_id ? {...item,job_state:inspection.state,recovery_required:["recovery_required","manual_review","reconciling","rolling_back"].includes(inspection.state),added_tracks_count:inspection.counts.confirmed,is_rolled_back:inspection.state==="rolled_back"} : item))} />}
               </Card>
             );
           })}

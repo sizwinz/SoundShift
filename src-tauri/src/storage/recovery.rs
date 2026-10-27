@@ -73,10 +73,11 @@ fn validate_schema_version(conn: &Connection) -> Result<(), String> {
             )
             .optional()
             .map_err(|e| e.to_string())?;
-        if version
-            .as_deref()
-            .is_some_and(|value| value != CURRENT_SCHEMA_VERSION.to_string())
-        {
+        if version.as_deref().is_some_and(|value| {
+            value.parse::<i64>().map_or(true, |version| {
+                !(1..=CURRENT_SCHEMA_VERSION).contains(&version)
+            })
+        }) {
             return Err(
                 "Unsupported database schema version; database preserved without migration".into(),
             );

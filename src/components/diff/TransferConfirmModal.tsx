@@ -20,7 +20,6 @@ import {
   ListMusic,
   AlertCircle,
 } from "lucide-react";
-import { defaultSettings, readSoundShiftSettings } from "../settings/SettingsPage";
 
 export function parsePlaylistId(input: string): string {
   const trimmed = input.trim();
@@ -87,18 +86,7 @@ export const TransferConfirmModal: React.FC<TransferConfirmModalProps> = ({
   const [isLoadingPlaylists, setIsLoadingPlaylists] = useState(false);
   const [playlistError, setPlaylistError] = useState<string | null>(null);
 
-  const [concurrency, setConcurrency] = useState(() => {
-    try {
-      return readSoundShiftSettings().concurrency;
-    } catch {
-      return defaultSettings.concurrency;
-    }
-  });
-
-  const isYtMusic =
-    targetService.toLowerCase().includes("ytmusic") ||
-    targetService.toLowerCase().includes("youtube");
-  const effectiveConcurrency = isYtMusic ? 1 : concurrency;
+  const effectiveConcurrency = 1;
 
   const fetchDestinationPlaylists = async (forceRefresh: boolean = false) => {
     setIsLoadingPlaylists(true);
@@ -186,7 +174,7 @@ export const TransferConfirmModal: React.FC<TransferConfirmModalProps> = ({
                 Confirm Playlist Transfer
               </h2>
               <p className="text-[11px] text-zinc-500">
-                Configure destination playlist and concurrency before running batch migration.
+                Choose the destination playlist before starting the transfer.
               </p>
             </div>
           </div>
@@ -471,33 +459,9 @@ export const TransferConfirmModal: React.FC<TransferConfirmModalProps> = ({
               </span>
             </div>
 
-            {isYtMusic ? (
-              <div className="p-3 rounded-lg bg-zinc-900/70 border border-zinc-800 text-[11px] space-y-1">
-                <div className="flex items-center gap-1.5 text-amber-400 font-medium">
-                  <span>Single-Writer Mode Active</span>
-                </div>
-                <p className="text-[10px] text-zinc-400 leading-relaxed">
-                  YouTube Music enforces strict playlist edit consistency. Mutations are serialized to 1 worker to eliminate 409 Conflict collisions and preserve playlist sequencing.
-                </p>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2">
-                {[1, 2, 4, 6, 8].map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    onClick={() => setConcurrency(c)}
-                    className={`flex-1 py-1.5 rounded text-xs font-medium border transition-colors cursor-pointer ${
-                      concurrency === c
-                        ? "bg-emerald-500 text-black border-emerald-400 font-bold"
-                        : "bg-[#121215] border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700"
-                    }`}
-                  >
-                    {c} {c === 4 && <span className="text-[9px] block text-inherit font-normal">(Default)</span>}
-                  </button>
-                ))}
-              </div>
-            )}
+            <div className="p-3 rounded-lg bg-zinc-900/70 border border-zinc-800 text-[11px] text-zinc-400">
+              Playlist writes run one at a time to preserve track order. Matching can run concurrently.
+            </div>
           </div>
 
           {/* Breakdown Stats */}
@@ -529,7 +493,7 @@ export const TransferConfirmModal: React.FC<TransferConfirmModalProps> = ({
             <ShieldCheck className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
             <div className="text-[11px] leading-relaxed">
               <span className="font-semibold text-emerald-300">1-Click Snapshot Rollback: </span>
-              SoundShift will transactionally write an immutable local snapshot to SQLite prior to mutations, allowing instant 1-click rollback at any time.
+              SoundShift records an immutable local snapshot before writes. Recovery checks occurrence evidence before rollback and stops for manual review when the provider cannot prove a safe action.
             </div>
           </div>
         </div>

@@ -22,8 +22,14 @@ struct FakeProvider {
     entered: Notify,
     release: Semaphore,
     gated: bool,
+    gate_canary: bool,
+    revision: Option<String>,
+    session_error: Option<crate::providers::error::ProviderError>,
     result: Result<(), String>,
     remote_file: Option<PathBuf>,
+    read_ids: Mutex<Vec<Vec<String>>>,
+    outcome: Option<crate::providers::contracts::MutationOutcome>,
+    check_before: Option<Arc<Mutex<Connection>>>,
 }
 
 impl FakeProvider {
@@ -33,11 +39,24 @@ impl FakeProvider {
             entered: Notify::new(),
             release: Semaphore::new(0),
             gated,
+            gate_canary: false,
+            revision: None,
+            session_error: None,
             result,
             remote_file: None,
+            read_ids: Mutex::new(Vec::new()),
+            outcome: None,
+            check_before: None,
         }
     }
     async fn send(&self) -> Result<(), String> {
+        if let Some(db) = &self.check_before {
+            let saved:bool = db.lock().unwrap().query_row("SELECT EXISTS(SELECT 1 FROM transfer_operations WHERE before_json IS NOT NULL AND sent_at IS NOT NULL AND evidence_version=2)",[],|r|r.get(0)).unwrap();
+            assert!(
+                saved,
+                "before-state must be durable before outbound mutation"
+            );
+        }
         self.calls.fetch_add(1, Ordering::SeqCst);
         if let Some(path) = &self.remote_file {
             let mut file = std::fs::OpenOptions::new()
@@ -59,6 +78,27 @@ impl FakeProvider {
 
 #[async_trait]
 impl MusicProvider for FakeProvider {
+    async fn playlist_revision(
+        &self,
+        _: &str,
+    ) -> Result<Option<String>, crate::providers::error::ProviderError> {
+        Ok(self.revision.clone())
+    }
+    async fn check_session(&self) -> Result<(), crate::providers::error::ProviderError> {
+        if let Some(error) = &self.session_error {
+            return Err(error.clone());
+        }
+        self.canary()
+            .await
+            .map_err(crate::providers::error::ProviderError::before_send)
+    }
+    async fn canary(&self) -> Result<(), String> {
+        if self.gate_canary {
+            self.entered.notify_one();
+            self.release.acquire().await.unwrap().forget();
+        }
+        Ok(())
+    }
     async fn list_playlists(&self) -> Result<Vec<Playlist>, String> {
         Ok(vec![])
     }
@@ -67,7 +107,13 @@ impl MusicProvider for FakeProvider {
         _: &str,
         _: Option<tokio::sync::mpsc::Sender<Vec<SourceTrack>>>,
     ) -> Result<Vec<SourceTrack>, String> {
-        Ok(vec![])
+        let mut reads = self.read_ids.lock().unwrap();
+        let ids = if reads.len() > 1 {
+            reads.remove(0)
+        } else {
+            reads.first().cloned().unwrap_or_default()
+        };
+        Ok(ids.into_iter().map(|id| serde_json::from_value(serde_json::json!({"id":id,"title":"fixture","artists":[],"duration_ms":0,"is_explicit":false,"is_playable":true})).unwrap()).collect())
     }
     async fn search_track(&self, _: &str) -> Result<Vec<SourceTrack>, String> {
         Ok(vec![])
@@ -78,6 +124,50 @@ impl MusicProvider for FakeProvider {
     }
     async fn add_tracks_to_playlist(&self, _: &str, _: &[String]) -> Result<(), String> {
         self.send().await
+    }
+    async fn add_occurrences(
+        &self,
+        _: &str,
+        ids: &[String],
+    ) -> Result<crate::providers::contracts::MutationOutcome, crate::providers::error::ProviderError>
+    {
+        use crate::providers::{contracts::*, error::*};
+        self.send().await.map_err(|error| {
+            if error.contains("429") {
+                ProviderError::http(429, &reqwest::header::HeaderMap::new())
+            } else {
+                ProviderError::new(
+                    ProviderErrorKind::Timeout,
+                    SendCertainty::MayHaveApplied,
+                    &error,
+                )
+            }
+        })?;
+        let outcome = self.outcome.clone().unwrap_or_else(|| MutationOutcome {
+            occurrences: ids
+                .iter()
+                .enumerate()
+                .map(|(index, id)| OccurrenceOutcome {
+                    index,
+                    track_id: id.clone(),
+                    status: OccurrenceStatus::Accepted,
+                    remote_id: None,
+                })
+                .collect(),
+            revision: None,
+        });
+        let mut reads = self.read_ids.lock().unwrap();
+        if reads.is_empty() {
+            reads.push(Vec::new());
+        }
+        reads.last_mut().unwrap().extend(
+            outcome
+                .occurrences
+                .iter()
+                .filter(|o| o.status == OccurrenceStatus::Accepted)
+                .map(|o| o.track_id.clone()),
+        );
+        Ok(outcome)
     }
     async fn remove_tracks_from_playlist(&self, _: &str, _: &[String]) -> Result<(), String> {
         panic!("No rollback should be dispatched in these tests")
@@ -502,4 +592,566 @@ async fn unsupported_youtube_duplicate_occurrences_block_before_creation() {
         "duplicate preservation is unsupported and must not silently skip"
     );
     assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn unstable_read_never_becomes_a_complete_baseline() {
+    let provider = FakeProvider::new(false, Ok(()));
+    *provider.read_ids.lock().unwrap() = vec![vec!["a".into()], vec!["b".into()]];
+    assert!(provider.read_playlist("target").await.is_err());
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn partial_write_checkpoints_accepted_and_uncertain_occurrences_separately() {
+    use crate::providers::contracts::*;
+    let (db, control) = fixture();
+    let mut provider = FakeProvider::new(false, Ok(()));
+    provider.outcome = Some(MutationOutcome {
+        occurrences: vec![
+            OccurrenceOutcome {
+                index: 0,
+                track_id: "a".into(),
+                status: OccurrenceStatus::Accepted,
+                remote_id: Some("occ-a".into()),
+            },
+            OccurrenceOutcome {
+                index: 1,
+                track_id: "b".into(),
+                status: OccurrenceStatus::Uncertain,
+                remote_id: None,
+            },
+        ],
+        revision: None,
+    });
+    let result = journaled_add(
+        &db,
+        &provider,
+        "worker_job",
+        "target",
+        0,
+        &["a".into(), "b".into()],
+        &AtomicU32::new(2),
+        &control,
+    )
+    .await;
+    assert!(result.is_err(), "partial write must require recovery");
+    let conn = db.lock().unwrap();
+    let evidence: String = conn
+        .query_row("SELECT outcome_json FROM transfer_operations", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    let outcome: MutationOutcome = serde_json::from_str(&evidence).unwrap();
+    assert_eq!(outcome.occurrences[0].status, OccurrenceStatus::Accepted);
+    assert_eq!(outcome.occurrences[1].status, OccurrenceStatus::Uncertain);
+    assert_eq!(
+        load_snapshot(&conn, "snap_worker_job")
+            .unwrap()
+            .added_track_ids,
+        vec!["a"]
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn playlist_mutations_serialize_for_every_provider() {
+    assert_eq!(resolve_concurrency("spotify", 8), 1);
+    assert_eq!(resolve_concurrency("ytmusic", 8), 1);
+}
+
+#[tokio::test]
+async fn before_state_is_durable_before_dispatch() {
+    let (db, control) = fixture();
+    let mut provider = FakeProvider::new(false, Ok(()));
+    provider.check_before = Some(db.clone());
+    assert!(journaled_add(
+        &db,
+        &provider,
+        "worker_job",
+        "target",
+        0,
+        &["track".into()],
+        &AtomicU32::new(0),
+        &control
+    )
+    .await
+    .unwrap());
+}
+
+#[tokio::test]
+async fn recovery_inspection_reports_disjoint_partial_counts_and_blocks_replay() {
+    use crate::providers::contracts::*;
+    let (db, control) = fixture();
+    db.lock()
+        .unwrap()
+        .execute("UPDATE transfer_jobs SET total_tracks=3", [])
+        .unwrap();
+    let mut provider = FakeProvider::new(false, Ok(()));
+    provider.outcome = Some(MutationOutcome {
+        occurrences: vec![
+            OccurrenceOutcome {
+                index: 0,
+                track_id: "a".into(),
+                status: OccurrenceStatus::Accepted,
+                remote_id: Some("owned-a".into()),
+            },
+            OccurrenceOutcome {
+                index: 1,
+                track_id: "b".into(),
+                status: OccurrenceStatus::Uncertain,
+                remote_id: None,
+            },
+        ],
+        revision: None,
+    });
+    assert!(journaled_add(
+        &db,
+        &provider,
+        "worker_job",
+        "target",
+        0,
+        &["a".into(), "b".into()],
+        &AtomicU32::new(0),
+        &control
+    )
+    .await
+    .is_err());
+    let inspection =
+        crate::engine::recovery::inspect_job(&db.lock().unwrap(), "worker_job").unwrap();
+    assert_eq!(inspection.counts.confirmed, 1);
+    assert_eq!(inspection.counts.uncertain, 1);
+    assert_eq!(inspection.counts.unsent, 1);
+    assert_eq!(inspection.counts.selected, 3);
+    assert!(!inspection.can_resume);
+}
+
+#[test]
+fn planning_retains_original_occurrence_indices_and_durable_unsent_work() {
+    let (db, _) = fixture();
+    let track:SourceTrack=serde_json::from_value(serde_json::json!({"id":"a","title":"fixture","artists":[],"duration_ms":0,"is_explicit":false,"is_playable":true})).unwrap();
+    let config = BatchTransferConfig {
+        job_id: "worker_job".into(),
+        source_service: "spotify".into(),
+        target_service: "spotify".into(),
+        source_playlist_name: "fixture".into(),
+        target_playlist_id: Some("target".into()),
+        target_playlist_name: None,
+        is_new_playlist: false,
+        tracks: vec![track.clone(), track.clone()],
+        concurrency: 8,
+        skip_duplicates: true,
+    };
+    let batches = plan_batches(&db.lock().unwrap(), &config, &[]).unwrap();
+    assert_eq!(batches.len(), 1);
+    assert_eq!(batches[0].source_indices, vec![0]);
+    let conn = db.lock().unwrap();
+    let indices: String = conn
+        .query_row("SELECT skipped_indices_json FROM transfer_jobs", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(indices, "[1]");
+    let planned: bool = conn
+        .query_row(
+            "SELECT sent_at IS NULL AND evidence_version=2 FROM transfer_operations",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(planned);
+}
+
+#[tokio::test]
+async fn reconciliation_never_uses_membership_or_absence_as_write_proof() {
+    let (db, _) = fixture();
+    record_operation_intent(&db.lock().unwrap(), "worker_job", 0, &["a".into()]).unwrap();
+    let provider = FakeProvider::new(false, Ok(()));
+    *provider.read_ids.lock().unwrap() = vec![vec!["a".into()]];
+    let inspection = crate::engine::recovery::reconcile_job(&db, &provider, "worker_job", |_| {})
+        .await
+        .unwrap();
+    assert_eq!(inspection.counts.confirmed, 0);
+    assert_eq!(inspection.counts.uncertain, 1);
+    assert_eq!(inspection.state, "manual_review");
+    *provider.read_ids.lock().unwrap() = vec![vec![]];
+    let inspection = crate::engine::recovery::reconcile_job(&db, &provider, "worker_job", |_| {})
+        .await
+        .unwrap();
+    assert_eq!(inspection.counts.uncertain, 1);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn resume_uses_durable_operation_ids_without_replaying_confirmed_work() {
+    use crate::providers::contracts::*;
+    let (db, _) = fixture();
+    let track = |id: &str| {
+        serde_json::from_value::<SourceTrack>(serde_json::json!({"id":id,"title":"fixture","artists":[],"duration_ms":0,"is_explicit":false,"is_playable":true})).unwrap()
+    };
+    let config = BatchTransferConfig {
+        job_id: "worker_job".into(),
+        source_service: "spotify".into(),
+        target_service: "spotify".into(),
+        source_playlist_name: "fixture".into(),
+        target_playlist_id: Some("target".into()),
+        target_playlist_name: None,
+        is_new_playlist: false,
+        tracks: vec![track("a"), track("b")],
+        concurrency: 1,
+        skip_duplicates: false,
+    };
+    {
+        let conn = db.lock().unwrap();
+        conn.execute("UPDATE transfer_jobs SET total_tracks=2,manifest_json=?1,job_state='recovery_required'",[serde_json::to_string(&config).unwrap()]).unwrap();
+        for (index, id) in ["a", "b"].iter().enumerate() {
+            let op =
+                record_operation_intent(&conn, "worker_job", index, &[id.to_string()]).unwrap();
+            conn.execute("UPDATE transfer_operations SET evidence_version=2,source_indices_json=?1 WHERE operation_id=?2",rusqlite::params![format!("[{index}]"),op]).unwrap();
+            if index == 0 {
+                update_operation_outcome(
+                    &conn,
+                    &op,
+                    OperationOutcome::Confirmed,
+                    1,
+                    Some("accepted"),
+                )
+                .unwrap();
+                let outcome = MutationOutcome {
+                    occurrences: vec![OccurrenceOutcome {
+                        index: 0,
+                        track_id: "a".into(),
+                        status: OccurrenceStatus::Accepted,
+                        remote_id: Some("owned-a".into()),
+                    }],
+                    revision: None,
+                };
+                conn.execute(
+                    "UPDATE transfer_operations SET outcome_json=?1 WHERE operation_id=?2",
+                    rusqlite::params![serde_json::to_string(&outcome).unwrap(), op],
+                )
+                .unwrap();
+            }
+        }
+    }
+    let provider = FakeProvider::new(false, Ok(()));
+    *provider.read_ids.lock().unwrap() = vec![vec!["a".into()]];
+    let control = TransferControl::new("worker_job".into(), db.clone(), |_| {});
+    let inspection = crate::engine::recovery::resume_job(&db, &provider, "worker_job", &control)
+        .await
+        .unwrap();
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(inspection.counts.confirmed, 2);
+    assert_eq!(inspection.state, "completed_verified");
+    assert!(
+        crate::engine::recovery::resume_job(&db, &provider, "worker_job", &control)
+            .await
+            .is_err()
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn verification_rejects_reordered_occurrences_even_with_equal_membership() {
+    let provider = FakeProvider::new(false, Ok(()));
+    *provider.read_ids.lock().unwrap() = vec![vec!["b".into(), "a".into()]];
+    let audit = audit_playlist(&provider, "target", &["a".into(), "b".into()])
+        .await
+        .unwrap();
+    assert!(!audit.is_verified);
+}
+
+#[tokio::test]
+async fn legacy_snapshot_without_attribution_never_dispatches_rollback() {
+    let conn = Connection::open_in_memory().unwrap();
+    crate::storage::schema::create_tables(&conn).unwrap();
+    let snapshot = create_pre_mutation_snapshot(
+        &conn,
+        "legacy",
+        "spotify",
+        "ytmusic",
+        "fixture",
+        "target",
+        "target",
+        false,
+        1,
+        1,
+        vec![],
+        vec!["a".into()],
+    )
+    .unwrap();
+    let db = Mutex::new(conn);
+    let provider = FakeProvider::new(false, Ok(()));
+    *provider.read_ids.lock().unwrap() = vec![vec!["a".into()]];
+    assert!(
+        crate::engine::snapshot::rollback_snapshot(&db, &snapshot, false, &provider)
+            .await
+            .is_err()
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn exhausted_retry_budget_survives_job_restart() {
+    let (db, _) = fixture();
+    let conn = db.lock().unwrap();
+    conn.execute(
+        "UPDATE transfer_jobs SET manifest_json='{}',job_state='recovery_required'",
+        [],
+    )
+    .unwrap();
+    let op = record_operation_intent(&conn, "worker_job", 0, &["a".into()]).unwrap();
+    let outcome = crate::providers::contracts::MutationOutcome {
+        occurrences: vec![crate::providers::contracts::OccurrenceOutcome {
+            index: 0,
+            track_id: "a".into(),
+            status: crate::providers::contracts::OccurrenceStatus::Rejected,
+            remote_id: None,
+        }],
+        revision: None,
+    };
+    let error =
+        crate::providers::error::ProviderError::http(429, &reqwest::header::HeaderMap::new());
+    conn.execute("UPDATE transfer_operations SET evidence_version=2,source_indices_json='[0]',status='failed',attempt_count=22,sent_at=1,outcome_json=?1,provider_response=?2 WHERE operation_id=?3",rusqlite::params![serde_json::to_string(&outcome).unwrap(),serde_json::to_string(&error).unwrap(),op]).unwrap();
+    assert!(
+        !crate::engine::recovery::inspect_job(&conn, "worker_job")
+            .unwrap()
+            .can_resume
+    );
+}
+
+#[test]
+fn retry_guidance_defers_resume_across_restart() {
+    let (db, _) = fixture();
+    let conn = db.lock().unwrap();
+    conn.execute(
+        "UPDATE transfer_jobs SET manifest_json='{}',job_state='recovery_required'",
+        [],
+    )
+    .unwrap();
+    let op = record_operation_intent(&conn, "worker_job", 0, &["a".into()]).unwrap();
+    let outcome = MutationOutcome {
+        occurrences: vec![OccurrenceOutcome {
+            index: 0,
+            track_id: "a".into(),
+            status: OccurrenceStatus::Rejected,
+            remote_id: None,
+        }],
+        revision: None,
+    };
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(reqwest::header::RETRY_AFTER, "60".parse().unwrap());
+    let error = crate::providers::error::ProviderError::http(429, &headers);
+    conn.execute("UPDATE transfer_operations SET evidence_version=2,source_indices_json='[0]',status='failed',attempt_count=1,sent_at=1,outcome_json=?1,provider_response=?2 WHERE operation_id=?3",rusqlite::params![serde_json::to_string(&outcome).unwrap(),serde_json::to_string(&error).unwrap(),op]).unwrap();
+    assert!(
+        !crate::engine::recovery::inspect_job(&conn, "worker_job")
+            .unwrap()
+            .can_resume
+    );
+}
+
+#[tokio::test]
+async fn cancellation_during_preflight_prevents_outbound_mutation() {
+    let (db, control) = fixture();
+    let mut provider = FakeProvider::new(false, Ok(()));
+    provider.gate_canary = true;
+    let provider = Arc::new(provider);
+    let task = spawn_add(db, control.clone(), provider.clone());
+    entered(&provider).await;
+    control.cancel().unwrap();
+    provider.release.add_permits(1);
+    assert!(!task.await.unwrap().unwrap());
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn pause_during_preflight_acknowledges_without_starting_a_write() {
+    let (db, control) = fixture();
+    let mut provider = FakeProvider::new(false, Ok(()));
+    provider.gate_canary = true;
+    let provider = Arc::new(provider);
+    let task = spawn_add(db, control.clone(), provider.clone());
+    entered(&provider).await;
+    control.pause().unwrap();
+    provider.release.add_permits(1);
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while control.snapshot().unwrap().state != JobState::Paused {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+    control.cancel().unwrap();
+    assert!(!task.await.unwrap().unwrap());
+}
+
+#[tokio::test]
+async fn cancellation_preserves_proven_rejection_evidence_for_explicit_resume() {
+    let (db, control) = fixture();
+    let provider = Arc::new(FakeProvider::new(false, Err("429 rate limited".into())));
+    let task = spawn_add(db.clone(), control.clone(), provider.clone());
+    entered(&provider).await;
+    control.cancel().unwrap();
+    assert!(!task.await.unwrap().unwrap());
+    let inspection =
+        crate::engine::recovery::inspect_job(&db.lock().unwrap(), "worker_job").unwrap();
+    assert!(
+        inspection.operations[0].can_retry(),
+        "cancellation must not erase the rejected response proof"
+    );
+}
+
+#[tokio::test]
+async fn destination_revision_drift_blocks_even_unchanged_track_membership() {
+    let (db, control) = fixture();
+    db.lock()
+        .unwrap()
+        .execute(
+            "UPDATE transfer_jobs SET target_fingerprint=?1",
+            [r#"{"revision":"old"}"#],
+        )
+        .unwrap();
+    let mut provider = FakeProvider::new(false, Ok(()));
+    provider.revision = Some("new".into());
+    assert!(journaled_add(
+        &db,
+        &provider,
+        "worker_job",
+        "target",
+        0,
+        &["track".into()],
+        &AtomicU32::new(0),
+        &control
+    )
+    .await
+    .is_err());
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn final_verification_rejects_a_different_provider_revision() {
+    let mut provider = FakeProvider::new(false, Ok(()));
+    provider.revision = Some("unexpected".into());
+    *provider.read_ids.lock().unwrap() = vec![vec!["a".into()]];
+    let audit = crate::engine::snapshot::audit_playlist_at_revision(
+        &provider,
+        "target",
+        &["a".into()],
+        Some("receipt-revision"),
+    )
+    .await
+    .unwrap();
+    assert!(!audit.is_verified);
+}
+
+#[tokio::test]
+async fn rate_limited_preflight_is_unsent_instead_of_uncertain() {
+    let (db, control) = fixture();
+    let mut provider = FakeProvider::new(false, Ok(()));
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(reqwest::header::RETRY_AFTER, "60".parse().unwrap());
+    provider.session_error = Some(crate::providers::error::ProviderError::read_http(
+        429, &headers,
+    ));
+    assert!(journaled_add(
+        &db,
+        &provider,
+        "worker_job",
+        "target",
+        0,
+        &["a".into()],
+        &AtomicU32::new(0),
+        &control
+    )
+    .await
+    .is_err());
+    let inspection =
+        crate::engine::recovery::inspect_job(&db.lock().unwrap(), "worker_job").unwrap();
+    assert_eq!(inspection.counts.unsent, 1);
+    assert_eq!(inspection.counts.uncertain, 0);
+    assert!(!inspection.can_resume);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn inconsistent_occurrence_receipts_cannot_change_a_recovery_payload() {
+    let (db, _) = fixture();
+    let conn = db.lock().unwrap();
+    let id = record_operation_intent(&conn, "worker_job", 0, &["original".into()]).unwrap();
+    update_operation_outcome(&conn, &id, OperationOutcome::Confirmed, 1, Some("accepted")).unwrap();
+    let outcome = MutationOutcome {
+        occurrences: vec![OccurrenceOutcome {
+            index: 0,
+            track_id: "different".into(),
+            status: OccurrenceStatus::Accepted,
+            remote_id: Some("wrong-owner".into()),
+        }],
+        revision: None,
+    };
+    conn.execute(
+        "UPDATE transfer_operations SET outcome_json=?1 WHERE operation_id=?2",
+        rusqlite::params![serde_json::to_string(&outcome).unwrap(), id],
+    )
+    .unwrap();
+    assert!(load_snapshot(&conn, "snap_worker_job").is_err());
+    assert!(crate::engine::recovery::inspect_job(&conn, "worker_job").is_err());
+}
+
+#[test]
+fn altered_journal_payload_cannot_be_replayed_or_counted_as_confirmed() {
+    let (db, _) = fixture();
+    let conn = db.lock().unwrap();
+    let id = record_operation_intent(&conn, "worker_job", 0, &["original".into()]).unwrap();
+    update_operation_outcome(&conn, &id, OperationOutcome::Confirmed, 1, Some("accepted")).unwrap();
+    conn.execute(
+        "UPDATE transfer_operations SET payload_json=?1 WHERE operation_id=?2",
+        rusqlite::params![r#"["different"]"#, id],
+    )
+    .unwrap();
+    assert!(load_snapshot(&conn, "snap_worker_job").is_err());
+    assert!(crate::engine::recovery::inspect_job(&conn, "worker_job").is_err());
+}
+
+#[test]
+fn coarse_checkpoint_timestamps_never_shorten_retry_guidance() {
+    let (db, _) = fixture();
+    let conn = db.lock().unwrap();
+    let op = record_operation_intent(&conn, "worker_job", 0, &["a".into()]).unwrap();
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(reqwest::header::RETRY_AFTER, "60".parse().unwrap());
+    let error = crate::providers::error::ProviderError::read_http(429, &headers);
+    conn.execute("UPDATE transfer_operations SET evidence_version=2,status='failed',updated_at=1000,provider_response=?1 WHERE operation_id=?2",rusqlite::params![serde_json::to_string(&error).unwrap(),op]).unwrap();
+    let inspection = crate::engine::recovery::inspect_job(&conn, "worker_job").unwrap();
+    assert!(
+        inspection.operations[0].retry_not_before_ms.unwrap() >= 1_060_999,
+        "the response may have arrived at the end of the recorded second"
+    );
+}
+
+#[test]
+fn legacy_confirmation_cannot_authorize_a_new_automatic_resume() {
+    let (db, _) = fixture();
+    let conn = db.lock().unwrap();
+    conn.execute(
+        "UPDATE transfer_jobs SET total_tracks=2,manifest_json='{}',job_state='recovery_required'",
+        [],
+    )
+    .unwrap();
+    let old = record_operation_intent(&conn, "worker_job", 0, &["old".into()]).unwrap();
+    update_operation_outcome(
+        &conn,
+        &old,
+        OperationOutcome::Confirmed,
+        1,
+        Some("legacy acceptance"),
+    )
+    .unwrap();
+    let pending = record_operation_intent(&conn, "worker_job", 1, &["new".into()]).unwrap();
+    conn.execute("UPDATE transfer_operations SET evidence_version=2,source_indices_json='[1]' WHERE operation_id=?1",[pending]).unwrap();
+    assert!(
+        !crate::engine::recovery::inspect_job(&conn, "worker_job")
+            .unwrap()
+            .can_resume
+    );
 }

@@ -14,7 +14,7 @@ export type TransferStage =
 
 export interface LifecycleUpdate {
   job_id: string;
-  state: "starting" | "running" | "pausing" | "paused" | "cancelling" | "cancelled" | "completed_verified" | "recovery_required";
+  state: "starting" | "running" | "pausing" | "paused" | "cancelling" | "cancelled" | "completed_verified" | "recovery_required" | "reconciling" | "manual_review" | "rolling_back" | "rolled_back";
   event_seq: number;
 }
 
@@ -72,6 +72,9 @@ export interface BatchTransferSummary {
   audit: AuditResult | null;
   state: LifecycleUpdate["state"];
   event_seq: number;
+  counts?: RecoveryCounts;
+  verification?: string;
+  error?: string | null;
 }
 
 export interface TransferHistoryEntry {
@@ -92,4 +95,13 @@ export interface TransferHistoryEntry {
   job_state: string;
   recovery_required: boolean;
   last_error: string | null;
+}
+
+export interface RecoveryCounts {
+  selected: number; confirmed: number; failed: number; skipped: number; uncertain: number; unsent: number;
+}
+export interface JobInspection {
+  job_id: string; state: string; event_seq: number; counts: RecoveryCounts;
+  verification: string; can_resume: boolean; next_action: string;
+  operations: {operation_id: string; operation_type: string; status: string; attempt_count: number}[];
 }
