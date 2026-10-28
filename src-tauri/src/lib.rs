@@ -4,6 +4,7 @@ pub mod engine;
 pub mod models;
 pub mod providers;
 pub mod storage;
+pub mod sync;
 
 use crate::engine::worker::TransferControl;
 use std::collections::HashMap;

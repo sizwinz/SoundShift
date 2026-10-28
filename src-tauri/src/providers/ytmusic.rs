@@ -326,7 +326,7 @@ impl YouTubeMusicProvider {
                     .and_then(|a| a["setVideoId"].as_str())
                     .filter(|s| !s.is_empty())
                     .map(str::to_owned);
-                let valid = json["status"].as_str() != Some("STATUS_FAILED")
+                let valid = json["status"].as_str() == Some("STATUS_SUCCEEDED")
                     && remote_id.as_ref().is_some_and(|r| seen.insert(r.clone()));
                 OccurrenceOutcome {
                     index,
@@ -508,6 +508,131 @@ impl YouTubeMusicProvider {
 
 #[async_trait]
 impl MusicProvider for YouTubeMusicProvider {
+    async fn check_playlist_editable(&self, playlist_id: &str) -> Result<(), ProviderError> {
+        fn editable(value: &Value) -> bool {
+            match value {
+                Value::Object(map) => {
+                    map.contains_key("musicEditablePlaylistDetailHeaderRenderer")
+                        || map.values().any(editable)
+                }
+                Value::Array(items) => items.iter().any(editable),
+                _ => false,
+            }
+        }
+        if playlist_id.is_empty()
+            || !playlist_id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
+            return Err(ProviderError::new(
+                ProviderErrorKind::Permission,
+                SendCertainty::NotSent,
+                "Choose an editable YouTube Music playlist",
+            ));
+        }
+        let endpoint = "https://music.youtube.com/youtubei/v1/browse";
+        #[cfg(test)]
+        let endpoint = self.edit_url.as_deref().unwrap_or(endpoint);
+        let response=self.client.post(endpoint).headers(self.build_headers().map_err(ProviderError::before_send)?)
+            .json(&json!({"context":Self::client_context(),"browseId":if playlist_id.starts_with("VL"){playlist_id.to_string()}else{format!("VL{playlist_id}")}})).send().await.map_err(ProviderError::read_transport)?;
+        if !response.status().is_success() {
+            return Err(ProviderError::read_http(
+                response.status().as_u16(),
+                response.headers(),
+            ));
+        }
+        let value: Value = response.json().await.map_err(|_| {
+            ProviderError::new(
+                ProviderErrorKind::MalformedResponse,
+                SendCertainty::NotSent,
+                "YouTube playlist permissions response is malformed",
+            )
+        })?;
+        if !editable(&value) {
+            return Err(ProviderError::new(
+                ProviderErrorKind::Permission,
+                SendCertainty::NotSent,
+                "YouTube playlist is read-only or editability is unverified",
+            ));
+        }
+        Ok(())
+    }
+    fn sync_capabilities(&self) -> crate::providers::contracts::SyncCapabilities {
+        crate::providers::contracts::SyncCapabilities {
+            duplicate_insertion: true,
+            exact_removal: true,
+            occurrence_movement: true,
+        }
+    }
+    async fn move_occurrence(
+        &self,
+        playlist_id: &str,
+        occurrence: &PlaylistOccurrence,
+        before: Option<&PlaylistOccurrence>,
+        baseline: &PlaylistRead,
+    ) -> Result<MutationOutcome, ProviderError> {
+        let identity = |o: &PlaylistOccurrence| -> Result<String, ProviderError> {
+            if !baseline.complete
+                || baseline
+                    .occurrences
+                    .get(o.index)
+                    .is_none_or(|b| b.remote_id != o.remote_id || b.track.id != o.track.id)
+            {
+                return Err(ProviderError::new(
+                    ProviderErrorKind::Conflict,
+                    SendCertainty::NotSent,
+                    "Occurrence differs from complete baseline",
+                ));
+            }
+            o.remote_id
+                .clone()
+                .filter(|id| !id.is_empty())
+                .ok_or_else(|| {
+                    ProviderError::new(
+                        ProviderErrorKind::Unknown,
+                        SendCertainty::NotSent,
+                        "Occurrence identity missing; no move sent",
+                    )
+                })
+        };
+        let remote = identity(occurrence)?;
+        let mut action = json!({"action":"ACTION_MOVE_VIDEO_BEFORE","setVideoId":remote});
+        if let Some(successor) = before {
+            action["movedSetVideoIdSuccessor"] = json!(identity(successor)?);
+        }
+        let endpoint = "https://music.youtube.com/youtubei/v1/browse/edit_playlist";
+        #[cfg(test)]
+        let endpoint = self.edit_url.as_deref().unwrap_or(endpoint);
+        let response = self.client.post(endpoint).headers(self.build_headers().map_err(ProviderError::before_send)?)
+            .json(&json!({"context":Self::client_context(),"playlistId":playlist_id.trim_start_matches("VL"),"actions":[action]}))
+            .send().await.map_err(ProviderError::transport)?;
+        if !response.status().is_success() {
+            return Err(ProviderError::http(
+                response.status().as_u16(),
+                response.headers(),
+            ));
+        }
+        let value: Value = response.json().await.map_err(|_| {
+            ProviderError::new(
+                ProviderErrorKind::MalformedResponse,
+                SendCertainty::MayHaveApplied,
+                "Invalid movement response; outcome uncertain",
+            )
+        })?;
+        Ok(MutationOutcome {
+            occurrences: vec![OccurrenceOutcome {
+                index: 0,
+                track_id: occurrence.track.id.clone(),
+                remote_id: Some(remote),
+                status: if value["status"] == "STATUS_SUCCEEDED" {
+                    OccurrenceStatus::Accepted
+                } else {
+                    OccurrenceStatus::Uncertain
+                },
+            }],
+            revision: None,
+        })
+    }
     async fn canary(&self) -> Result<(), String> {
         self.check_session().await.map_err(|e| e.to_string())
     }
@@ -984,6 +1109,97 @@ impl MusicProvider for YouTubeMusicProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn sync_youtube_editability_requires_recognized_editable_header() {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        let thread = std::thread::spawn(move || {
+            let (mut socket, _) = server.accept().unwrap();
+            let mut bytes = [0; 8192];
+            socket.read(&mut bytes).unwrap();
+            let body = r#"{"header":{"musicEditablePlaylistDetailHeaderRenderer":{}}}"#;
+            write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+        });
+        let mut provider = YouTubeMusicProvider::new("fixture".into());
+        provider.edit_url = Some(format!("http://{address}"));
+        provider.check_playlist_editable("fixture").await.unwrap();
+        thread.join().unwrap();
+    }
+    #[test]
+    fn unknown_duplicate_insertion_status_is_not_confirmation() {
+        let outcome = YouTubeMusicProvider::parse_add_outcome(
+            &json!({"status":"NEW_UNKNOWN_STATUS","playlistEditResults":[
+                {"playlistEditVideoAddedResultData":{"videoId":"a","setVideoId":"one"}},
+                {"playlistEditVideoAddedResultData":{"videoId":"a","setVideoId":"two"}}
+            ]}),
+            &["a".into(), "a".into()],
+        );
+        assert!(outcome
+            .occurrences
+            .iter()
+            .all(|o| o.status == OccurrenceStatus::Uncertain));
+    }
+    #[tokio::test]
+    async fn sync_move_uses_occurrence_identity_and_successor() {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        let thread = std::thread::spawn(move || {
+            let (mut socket, _) = server.accept().unwrap();
+            let mut bytes = [0; 8192];
+            let size = socket.read(&mut bytes).unwrap();
+            let request = String::from_utf8_lossy(&bytes[..size]).to_string();
+            let body = r#"{"status":"STATUS_SUCCEEDED"}"#;
+            write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+            request
+        });
+        let mut provider = YouTubeMusicProvider::new("fixture".into());
+        provider.edit_url = Some(format!("http://{address}"));
+        let occurrence = PlaylistOccurrence {
+            index: 0,
+            track: SourceTrack {
+                id: "a".into(),
+                ..SourceTrack::unavailable(0)
+            },
+            remote_id: Some("occ-a".into()),
+        };
+        let successor = PlaylistOccurrence {
+            index: 1,
+            track: SourceTrack {
+                id: "b".into(),
+                ..SourceTrack::unavailable(1)
+            },
+            remote_id: Some("occ-b".into()),
+        };
+        let baseline = PlaylistRead {
+            occurrences: vec![occurrence.clone(), successor.clone()],
+            revision: None,
+            complete: true,
+        };
+        let outcome = provider
+            .move_occurrence("fixture", &occurrence, Some(&successor), &baseline)
+            .await
+            .unwrap();
+        assert!(outcome.all_accepted());
+        let request = thread.join().unwrap();
+        let body: Value = serde_json::from_str(request.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(
+            body["actions"][0],
+            json!({"action":"ACTION_MOVE_VIDEO_BEFORE","setVideoId":"occ-a","movedSetVideoIdSuccessor":"occ-b"})
+        );
+    }
+    #[test]
+    fn sync_capabilities_preserve_duplicates_without_claiming_spotify_exact_removal() {
+        let yt = YouTubeMusicProvider::new("fixture".into());
+        let spotify = crate::providers::spotify::SpotifyProvider::new("fixture".into());
+        assert!(yt.sync_capabilities().duplicate_insertion);
+        assert!(yt.sync_capabilities().occurrence_movement);
+        assert!(yt.sync_capabilities().exact_removal);
+        assert!(spotify.sync_capabilities().duplicate_insertion);
+        assert!(spotify.sync_capabilities().occurrence_movement);
+        assert!(!spotify.sync_capabilities().exact_removal);
+    }
 
     #[tokio::test]
     async fn mutation_error_excludes_raw_response_body() {
@@ -1048,7 +1264,7 @@ mod tests {
     fn partial_mutation_response_preserves_occurrence_certainty() {
         use crate::providers::contracts::OccurrenceStatus;
         let outcome = YouTubeMusicProvider::parse_add_outcome(
-            &json!({"playlistEditResults":[
+            &json!({"status":"STATUS_SUCCEEDED","playlistEditResults":[
                 {"playlistEditVideoAddedResultData":{"videoId":"a","setVideoId":"occurrence-a"}}
             ]}),
             &["a".into(), "b".into()],

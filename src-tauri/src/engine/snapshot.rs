@@ -355,9 +355,20 @@ pub fn persist_job_state(
     state: &str,
     error: Option<&str>,
 ) -> Result<u64, String> {
-    let error = error.map(crate::diagnostics::sanitize_for_log);
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
-    let changed = tx
+    let seq = persist_job_state_in_transaction(&tx, job_id, state, error)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(seq)
+}
+
+pub(crate) fn persist_job_state_in_transaction(
+    conn: &rusqlite::Connection,
+    job_id: &str,
+    state: &str,
+    error: Option<&str>,
+) -> Result<u64, String> {
+    let error = error.map(crate::diagnostics::sanitize_for_log);
+    let changed = conn
         .execute(
             "UPDATE transfer_jobs SET job_state = ?1, recovery_required = ?2, last_error = ?3,
          updated_at = ?4 WHERE job_id = ?5",
@@ -376,7 +387,7 @@ pub fn persist_job_state(
     if changed != 1 {
         return Err("Transfer job not found".into());
     }
-    tx.execute(
+    conn.execute(
         "INSERT INTO transfer_events (job_id, event_type, event_payload, event_seq, created_at)
          SELECT ?1, 'state_changed', ?2, COALESCE(MAX(event_seq), 0) + 1, ?3
          FROM transfer_events WHERE job_id = ?1",
@@ -387,14 +398,13 @@ pub fn persist_job_state(
         ],
     )
     .map_err(|e| e.to_string())?;
-    let seq: u64 = tx
+    let seq: u64 = conn
         .query_row(
             "SELECT MAX(event_seq) FROM transfer_events WHERE job_id = ?1",
             [job_id],
             |row| row.get(0),
         )
         .map_err(|e| e.to_string())?;
-    tx.commit().map_err(|e| e.to_string())?;
     Ok(seq)
 }
 

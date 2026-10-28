@@ -20,6 +20,12 @@ pub struct SpotifyProvider {
 }
 
 impl SpotifyProvider {
+    fn playlist_items_url(&self, playlist_id: &str) -> String {
+        let base = "https://api.spotify.com";
+        #[cfg(test)]
+        let base = self.mutation_url.as_deref().unwrap_or(base);
+        format!("{base}/v1/playlists/{playlist_id}/items")
+    }
     pub fn new(sp_dc: String) -> Self {
         Self {
             client: reqwest::Client::builder()
@@ -571,6 +577,215 @@ impl SpotifyProvider {
 
 #[async_trait]
 impl MusicProvider for SpotifyProvider {
+    async fn check_playlist_editable(&self, playlist_id: &str) -> Result<(), ProviderError> {
+        if !playlist_id.chars().all(|c| c.is_ascii_alphanumeric()) || playlist_id.is_empty() {
+            return Err(ProviderError::new(
+                ProviderErrorKind::Permission,
+                SendCertainty::NotSent,
+                "Choose an owned editable Spotify playlist",
+            ));
+        }
+        let base = "https://api.spotify.com";
+        #[cfg(test)]
+        let base = self.mutation_url.as_deref().unwrap_or(base);
+        let token = self
+            .get_access_token()
+            .await
+            .map_err(ProviderError::before_send)?;
+        let mut values = vec![];
+        for path in [
+            "/v1/me".to_string(),
+            format!("/v1/playlists/{playlist_id}?fields=owner(id)"),
+        ] {
+            let response = self
+                .client
+                .get(format!("{base}{path}"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .send()
+                .await
+                .map_err(ProviderError::read_transport)?;
+            if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+                self.invalidate_access_token().await;
+            }
+            if !response.status().is_success() {
+                return Err(ProviderError::read_http(
+                    response.status().as_u16(),
+                    response.headers(),
+                ));
+            }
+            values.push(response.json::<Value>().await.map_err(|_| {
+                ProviderError::new(
+                    ProviderErrorKind::MalformedResponse,
+                    SendCertainty::NotSent,
+                    "Playlist ownership response is malformed",
+                )
+            })?);
+        }
+        let user = values[0]["id"].as_str().filter(|s| !s.is_empty());
+        if user.is_none() || user != values[1]["owner"]["id"].as_str() {
+            return Err(ProviderError::new(
+                ProviderErrorKind::Permission,
+                SendCertainty::NotSent,
+                "Spotify playlist is read-only or not owned by the connected account",
+            ));
+        }
+        Ok(())
+    }
+    fn sync_capabilities(&self) -> crate::providers::contracts::SyncCapabilities {
+        crate::providers::contracts::SyncCapabilities {
+            duplicate_insertion: true,
+            exact_removal: false,
+            occurrence_movement: true,
+        }
+    }
+    async fn sync_remove_occurrence(
+        &self,
+        playlist_id: &str,
+        occurrence: &PlaylistOccurrence,
+        baseline: &PlaylistRead,
+    ) -> Result<MutationOutcome, ProviderError> {
+        if !baseline.complete
+            || baseline.revision.as_deref().is_none_or(str::is_empty)
+            || baseline
+                .occurrences
+                .get(occurrence.index)
+                .is_none_or(|o| o.track.id != occurrence.track.id)
+            || baseline
+                .occurrences
+                .iter()
+                .filter(|o| o.track.id == occurrence.track.id)
+                .count()
+                != 1
+        {
+            return Err(ProviderError::new(
+                ProviderErrorKind::Conflict,
+                SendCertainty::NotSent,
+                "Spotify duplicate or unversioned removal is unsupported; manual review required",
+            ));
+        }
+        let token = self
+            .get_access_token()
+            .await
+            .map_err(ProviderError::before_send)?;
+        let uri = if occurrence.track.id.starts_with("spotify:track:") {
+            occurrence.track.id.clone()
+        } else {
+            format!("spotify:track:{}", occurrence.track.id)
+        };
+        let response = self
+            .client
+            .delete(self.playlist_items_url(playlist_id))
+            .header(AUTHORIZATION, format!("Bearer {token}"))
+            .json(&serde_json::json!({"items":[{"uri":uri}],"snapshot_id":baseline.revision}))
+            .send()
+            .await
+            .map_err(ProviderError::transport)?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            self.invalidate_access_token().await;
+        }
+        if !response.status().is_success() {
+            return Err(ProviderError::http(
+                response.status().as_u16(),
+                response.headers(),
+            ));
+        }
+        let value: Value = response.json().await.map_err(|_| {
+            ProviderError::new(
+                ProviderErrorKind::MalformedResponse,
+                SendCertainty::MayHaveApplied,
+                "Invalid Spotify removal response; outcome uncertain",
+            )
+        })?;
+        let revision = value["snapshot_id"]
+            .as_str()
+            .filter(|r| !r.is_empty())
+            .map(str::to_owned);
+        Ok(MutationOutcome {
+            occurrences: vec![OccurrenceOutcome {
+                index: 0,
+                track_id: occurrence.track.id.clone(),
+                remote_id: None,
+                status: if revision.is_some() {
+                    OccurrenceStatus::Accepted
+                } else {
+                    OccurrenceStatus::Uncertain
+                },
+            }],
+            revision,
+        })
+    }
+    async fn move_occurrence(
+        &self,
+        playlist_id: &str,
+        occurrence: &PlaylistOccurrence,
+        before: Option<&PlaylistOccurrence>,
+        baseline: &PlaylistRead,
+    ) -> Result<MutationOutcome, ProviderError> {
+        let valid = |o: &PlaylistOccurrence| {
+            baseline
+                .occurrences
+                .get(o.index)
+                .is_some_and(|b| b.track.id == o.track.id)
+        };
+        let revision = baseline
+            .revision
+            .as_deref()
+            .filter(|r| !r.is_empty())
+            .ok_or_else(|| {
+                ProviderError::new(
+                    ProviderErrorKind::Conflict,
+                    SendCertainty::NotSent,
+                    "Spotify revision missing; no move sent",
+                )
+            })?;
+        if !baseline.complete || !valid(occurrence) || before.is_some_and(|o| !valid(o)) {
+            return Err(ProviderError::new(
+                ProviderErrorKind::Conflict,
+                SendCertainty::NotSent,
+                "Occurrence differs from complete baseline",
+            ));
+        }
+        let token = self
+            .get_access_token()
+            .await
+            .map_err(ProviderError::before_send)?;
+        let response = self.client.put(self.playlist_items_url(playlist_id)).header(AUTHORIZATION,format!("Bearer {token}"))
+            .json(&serde_json::json!({"range_start":occurrence.index,"range_length":1,"insert_before":before.map_or(baseline.occurrences.len(),|o|o.index),"snapshot_id":revision}))
+            .send().await.map_err(ProviderError::transport)?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            self.invalidate_access_token().await;
+        }
+        if !response.status().is_success() {
+            return Err(ProviderError::http(
+                response.status().as_u16(),
+                response.headers(),
+            ));
+        }
+        let value: Value = response.json().await.map_err(|_| {
+            ProviderError::new(
+                ProviderErrorKind::MalformedResponse,
+                SendCertainty::MayHaveApplied,
+                "Invalid Spotify movement response; outcome uncertain",
+            )
+        })?;
+        let revision = value["snapshot_id"]
+            .as_str()
+            .filter(|r| !r.is_empty())
+            .map(str::to_owned);
+        Ok(MutationOutcome {
+            occurrences: vec![OccurrenceOutcome {
+                index: 0,
+                track_id: occurrence.track.id.clone(),
+                remote_id: None,
+                status: if revision.is_some() {
+                    OccurrenceStatus::Accepted
+                } else {
+                    OccurrenceStatus::Uncertain
+                },
+            }],
+            revision,
+        })
+    }
     fn supports_isrc_search(&self) -> bool {
         true
     }
@@ -999,12 +1214,7 @@ impl MusicProvider for SpotifyProvider {
             .get_access_token()
             .await
             .map_err(ProviderError::before_send)?;
-        let url = format!(
-            "https://api.spotify.com/v1/playlists/{}/tracks",
-            playlist_id
-        );
-        #[cfg(test)]
-        let url = self.mutation_url.clone().unwrap_or(url);
+        let url = self.playlist_items_url(playlist_id);
         let uris: Vec<String> = track_ids
             .iter()
             .map(|id| {
@@ -1192,6 +1402,150 @@ pub fn generate_spotify_totp(timestamp_ms: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn sync_editability_requires_current_user_ownership() {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        let thread = std::thread::spawn(move || {
+            for body in [r#"{"id":"owner"}"#, r#"{"owner":{"id":"owner"}}"#] {
+                let (mut socket, _) = server.accept().unwrap();
+                let mut bytes = [0; 4096];
+                socket.read(&mut bytes).unwrap();
+                write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+            }
+        });
+        let mut provider = SpotifyProvider::new("fixture".into());
+        provider.mutation_url = Some(format!("http://{address}"));
+        *provider.access_token.write().await = Some("cached".into());
+        provider.check_playlist_editable("fixture").await.unwrap();
+        thread.join().unwrap();
+    }
+    #[tokio::test]
+    async fn sync_unique_removal_uses_items_and_snapshot() {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        let thread = std::thread::spawn(move || {
+            let (mut socket, _) = server.accept().unwrap();
+            let mut bytes = [0; 8192];
+            let size = socket.read(&mut bytes).unwrap();
+            let request = String::from_utf8_lossy(&bytes[..size]).to_string();
+            let body = r#"{"snapshot_id":"after"}"#;
+            write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+            request
+        });
+        let mut provider = SpotifyProvider::new("fixture".into());
+        provider.mutation_url = Some(format!("http://{address}"));
+        *provider.access_token.write().await = Some("cached".into());
+        let occurrence = PlaylistOccurrence {
+            index: 0,
+            track: SourceTrack {
+                id: "a".into(),
+                ..SourceTrack::unavailable(0)
+            },
+            remote_id: None,
+        };
+        let baseline = PlaylistRead {
+            occurrences: vec![occurrence.clone()],
+            revision: Some("before".into()),
+            complete: true,
+        };
+        assert!(provider
+            .sync_remove_occurrence("fixture", &occurrence, &baseline)
+            .await
+            .unwrap()
+            .all_accepted());
+        let request = thread.join().unwrap();
+        assert!(request.starts_with("DELETE /v1/playlists/fixture/items "));
+        let body: Value = serde_json::from_str(request.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(
+            body,
+            serde_json::json!({"items":[{"uri":"spotify:track:a"}],"snapshot_id":"before"})
+        );
+    }
+    #[tokio::test]
+    async fn sync_spotify_move_targets_versioned_position() {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        let thread = std::thread::spawn(move || {
+            let (mut socket, _) = server.accept().unwrap();
+            let mut bytes = [0; 8192];
+            let size = socket.read(&mut bytes).unwrap();
+            let request = String::from_utf8_lossy(&bytes[..size]).to_string();
+            let body = r#"{"snapshot_id":"after"}"#;
+            write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+            request
+        });
+        let mut provider = SpotifyProvider::new("fixture".into());
+        provider.mutation_url = Some(format!("http://{address}"));
+        *provider.access_token.write().await = Some("cached".into());
+        let a = PlaylistOccurrence {
+            index: 0,
+            track: SourceTrack {
+                id: "a".into(),
+                ..SourceTrack::unavailable(0)
+            },
+            remote_id: None,
+        };
+        let b = PlaylistOccurrence {
+            index: 1,
+            track: SourceTrack {
+                id: "b".into(),
+                ..SourceTrack::unavailable(1)
+            },
+            remote_id: None,
+        };
+        let baseline = PlaylistRead {
+            occurrences: vec![a.clone(), b.clone()],
+            revision: Some("before".into()),
+            complete: true,
+        };
+        let outcome = provider
+            .move_occurrence("fixture", &b, Some(&a), &baseline)
+            .await
+            .unwrap();
+        assert_eq!(outcome.revision.as_deref(), Some("after"));
+        let request = thread.join().unwrap();
+        assert!(request.starts_with("PUT /v1/playlists/fixture/items "));
+        let body: Value = serde_json::from_str(request.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(
+            body,
+            serde_json::json!({"range_start":1,"range_length":1,"insert_before":0,"snapshot_id":"before"})
+        );
+    }
+    #[tokio::test]
+    async fn playlist_add_uses_current_items_endpoint() {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        let thread = std::thread::spawn(move || {
+            let (mut socket, _) = server.accept().unwrap();
+            let mut request = [0u8; 8192];
+            let size = socket.read(&mut request).unwrap();
+            let first = String::from_utf8_lossy(&request[..size])
+                .lines()
+                .next()
+                .unwrap()
+                .to_string();
+            let body = r#"{"snapshot_id":"after"}"#;
+            write!(socket,"HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+            first
+        });
+        let mut provider = SpotifyProvider::new("fixture".into());
+        provider.mutation_url = Some(format!("http://{address}"));
+        *provider.access_token.write().await = Some("cached".into());
+        assert!(provider
+            .add_occurrences("fixture", &["a".into()])
+            .await
+            .unwrap()
+            .all_accepted());
+        assert_eq!(
+            thread.join().unwrap(),
+            "POST /v1/playlists/fixture/items HTTP/1.1"
+        );
+    }
     #[tokio::test]
     async fn spotify_structured_library_read_preserves_retry_headers() {
         use std::io::{Read, Write};

@@ -1,6 +1,13 @@
 //! Evidence carried across provider and durable journal boundaries.
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
+pub struct SyncCapabilities {
+    pub duplicate_insertion: bool,
+    pub exact_removal: bool,
+    pub occurrence_movement: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OccurrenceStatus {

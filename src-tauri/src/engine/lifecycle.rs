@@ -288,6 +288,81 @@ impl TransferControl {
     }
 
     /// Only the orchestrator calls this after every worker has drained.
+    pub async fn finish_with_checkpoint(
+        &self,
+        checkpoint: impl FnOnce(&Connection) -> Result<(), String>,
+    ) -> Result<LifecycleUpdate, String> {
+        let mut checkpoint = Some(checkpoint);
+        let mut changed = self.0.changed.subscribe();
+        loop {
+            {
+                let mut inner = self
+                    .0
+                    .inner
+                    .lock()
+                    .map_err(|_| "Lifecycle lock unavailable")?;
+                if inner.active != 0 {
+                    return Err("Cannot finalize while mutations are active".into());
+                }
+                match inner.update.state {
+                    JobState::Running => {
+                        let result = (|| {
+                            let conn = self
+                                .0
+                                .db
+                                .lock()
+                                .map_err(|_| "Lifecycle storage lock unavailable")?;
+                            let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+                            checkpoint
+                                .take()
+                                .ok_or("Final checkpoint already consumed")?(
+                                &tx
+                            )?;
+                            let seq = crate::engine::snapshot::persist_job_state_in_transaction(
+                                &tx,
+                                &inner.update.job_id,
+                                "completed_verified",
+                                None,
+                            )?;
+                            tx.commit().map_err(|e| e.to_string())?;
+                            Ok::<_, String>(seq)
+                        })();
+                        match result {
+                            Ok(seq) => {
+                                inner.update.state = JobState::CompletedVerified;
+                                inner.update.event_seq = seq;
+                                self.0.changed.send_replace(inner.update.clone());
+                                (self.0.emit)(inner.update.clone());
+                                return Ok(inner.update.clone());
+                            }
+                            Err(error) => {
+                                let _ = self.transition(
+                                    &mut inner,
+                                    JobState::RecoveryRequired,
+                                    Some(&error),
+                                );
+                                return Err(error);
+                            }
+                        }
+                    }
+                    JobState::Pausing | JobState::Paused => {}
+                    JobState::Cancelling => {
+                        return self.transition(&mut inner, JobState::Cancelled, None)
+                    }
+                    JobState::RecoveryRequired => {
+                        return Err("Recovery required; final checkpoint withheld".into())
+                    }
+                    _ => return Ok(inner.update.clone()),
+                }
+            }
+            changed
+                .changed()
+                .await
+                .map_err(|_| "Lifecycle channel closed")?;
+        }
+    }
+
+    /// Only the orchestrator calls this after every worker has drained.
     pub async fn finish(&self) -> Result<LifecycleUpdate, String> {
         let mut changed = self.0.changed.subscribe();
         loop {

@@ -7,6 +7,58 @@ use async_trait::async_trait;
 
 #[async_trait]
 pub trait MusicProvider: Send + Sync {
+    async fn check_playlist_editable(&self, _playlist_id: &str) -> Result<(), ProviderError> {
+        Err(ProviderError::new(
+            ProviderErrorKind::Permission,
+            SendCertainty::NotSent,
+            "Playlist editability is unverified; no sync writes permitted",
+        ))
+    }
+    fn sync_capabilities(&self) -> crate::providers::contracts::SyncCapabilities {
+        crate::providers::contracts::SyncCapabilities::default()
+    }
+    async fn move_occurrence(
+        &self,
+        _playlist_id: &str,
+        _occurrence: &PlaylistOccurrence,
+        _before: Option<&PlaylistOccurrence>,
+        _baseline: &PlaylistRead,
+    ) -> Result<MutationOutcome, ProviderError> {
+        Err(ProviderError::new(
+            ProviderErrorKind::Unknown,
+            SendCertainty::NotSent,
+            "Occurrence movement unsupported; no mutation sent",
+        ))
+    }
+    async fn sync_remove_occurrence(
+        &self,
+        playlist_id: &str,
+        occurrence: &PlaylistOccurrence,
+        baseline: &PlaylistRead,
+    ) -> Result<MutationOutcome, ProviderError> {
+        if !baseline.complete || !self.sync_capabilities().exact_removal {
+            return Err(ProviderError::new(
+                ProviderErrorKind::Unknown,
+                SendCertainty::NotSent,
+                "Exact removal unsupported; no mutation sent",
+            ));
+        }
+        self.remove_occurrences(
+            playlist_id,
+            std::slice::from_ref(occurrence),
+            baseline.revision.as_deref(),
+        )
+        .await?;
+        Ok(MutationOutcome {
+            occurrences: vec![crate::providers::contracts::OccurrenceOutcome {
+                index: 0,
+                track_id: occurrence.track.id.clone(),
+                status: crate::providers::contracts::OccurrenceStatus::Accepted,
+                remote_id: occurrence.remote_id.clone(),
+            }],
+            revision: None,
+        })
+    }
     async fn list_playlists(&self) -> Result<Vec<Playlist>, String>;
     async fn get_playlist_tracks(
         &self,

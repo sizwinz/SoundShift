@@ -2,6 +2,36 @@ use super::*;
 use crate::engine::snapshot::create_pre_mutation_snapshot;
 use std::time::Duration;
 
+#[tokio::test]
+async fn final_checkpoint_failure_cannot_publish_success_or_commit_baseline() {
+    let (control, db, updates) = fixture();
+    let result=control.finish_with_checkpoint(|conn| {
+        conn.execute("INSERT INTO transfer_manifest_state(key,value,updated_at) VALUES('sync_baseline','new',0)",[]).map_err(|e|e.to_string())?;
+        Err("injected baseline failure".into())
+    }).await;
+    assert!(result.is_err());
+    assert_eq!(
+        control.snapshot().unwrap().state,
+        JobState::RecoveryRequired
+    );
+    assert_eq!(
+        db.lock()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM transfer_manifest_state WHERE key='sync_baseline'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        0
+    );
+    assert!(!updates
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|u| u.state == JobState::CompletedVerified));
+}
+
 fn fixture() -> (
     TransferControl,
     Arc<Mutex<Connection>>,

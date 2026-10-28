@@ -1,7 +1,52 @@
 use rusqlite::{Connection, OptionalExtension, Result};
 use std::collections::HashSet;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 2;
+pub const CURRENT_SCHEMA_VERSION: i64 = 3;
+
+fn ensure_sync_schema(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS credential_generations (
+            service TEXT PRIMARY KEY, generation INTEGER NOT NULL);
+        INSERT OR IGNORE INTO credential_generations SELECT service_id, 1 FROM service_sessions;
+        CREATE TABLE IF NOT EXISTS sync_pairs (
+            pair_id TEXT PRIMARY KEY, payload_json TEXT NOT NULL,
+            state TEXT NOT NULL DEFAULT 'draft', enabled INTEGER NOT NULL DEFAULT 0,
+            next_due_at INTEGER, baseline_version INTEGER NOT NULL DEFAULT 0,
+            last_run_id TEXT, last_error TEXT, updated_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS sync_endpoints (
+            service TEXT NOT NULL, playlist_id TEXT NOT NULL, pair_id TEXT NOT NULL,
+            generation INTEGER NOT NULL,
+            PRIMARY KEY(service, playlist_id), FOREIGN KEY(pair_id) REFERENCES sync_pairs(pair_id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS sync_previews (
+            plan_id TEXT PRIMARY KEY, pair_id TEXT NOT NULL, payload_json TEXT NOT NULL,
+            payload_hash TEXT NOT NULL, created_at INTEGER NOT NULL,
+            FOREIGN KEY(pair_id) REFERENCES sync_pairs(pair_id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS sync_runs (
+            job_id TEXT PRIMARY KEY, pair_id TEXT NOT NULL, plan_id TEXT NOT NULL,
+            payload_json TEXT NOT NULL, payload_hash TEXT NOT NULL,
+            FOREIGN KEY(job_id) REFERENCES transfer_jobs(job_id), FOREIGN KEY(pair_id) REFERENCES sync_pairs(pair_id));
+        CREATE INDEX IF NOT EXISTS idx_sync_due ON sync_pairs(enabled, next_due_at);
+        CREATE TRIGGER IF NOT EXISTS sync_credential_insert AFTER INSERT ON service_sessions BEGIN
+            INSERT INTO credential_generations VALUES(NEW.service_id,1)
+                ON CONFLICT(service) DO UPDATE SET generation=generation+1;
+            UPDATE sync_pairs SET enabled=0,state='authentication_required',last_error='Account changed; revalidate this pair'
+                WHERE pair_id IN (SELECT pair_id FROM sync_endpoints WHERE service=NEW.service_id);
+        END;
+        CREATE TRIGGER IF NOT EXISTS sync_credential_update AFTER UPDATE OF auth_data ON service_sessions
+        WHEN OLD.auth_data != NEW.auth_data BEGIN
+            INSERT INTO credential_generations VALUES(NEW.service_id,1)
+                ON CONFLICT(service) DO UPDATE SET generation=generation+1;
+            UPDATE sync_pairs SET enabled=0,state='authentication_required',last_error='Account changed; revalidate this pair'
+                WHERE pair_id IN (SELECT pair_id FROM sync_endpoints WHERE service=NEW.service_id);
+        END;
+        CREATE TRIGGER IF NOT EXISTS sync_credential_delete AFTER DELETE ON service_sessions BEGIN
+            INSERT INTO credential_generations VALUES(OLD.service_id,1)
+                ON CONFLICT(service) DO UPDATE SET generation=generation+1;
+            UPDATE sync_pairs SET enabled=0,state='authentication_required',last_error='Account disconnected; revalidate this pair'
+                WHERE pair_id IN (SELECT pair_id FROM sync_endpoints WHERE service=OLD.service_id);
+        END;",
+    )
+}
 
 fn ensure_column(
     conn: &Connection,
@@ -176,6 +221,8 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
 
     ensure_indexes(conn)?;
 
+    ensure_sync_schema(conn)?;
+
     conn.execute(
         "INSERT INTO schema_metadata (key, value, updated_at) VALUES ('schema_version', ?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
@@ -315,6 +362,39 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sync_schema_is_durable_and_preserves_existing_sessions() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        conn.execute("INSERT INTO service_sessions(service_id,auth_data,updated_at) VALUES('fixture','protected',1)", []).unwrap();
+        run_migrations(&conn).unwrap();
+        for table in [
+            "sync_pairs",
+            "sync_endpoints",
+            "sync_previews",
+            "sync_runs",
+            "credential_generations",
+        ] {
+            let found: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    [table],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(found, 1, "missing {table}");
+        }
+        assert_eq!(CURRENT_SCHEMA_VERSION, 3);
+        assert_eq!(
+            conn.query_row(
+                "SELECT auth_data FROM service_sessions WHERE service_id='fixture'",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            "protected"
+        );
+    }
 
     #[test]
     fn version_one_migrates_operation_evidence_without_discarding_legacy_rows() {
@@ -334,7 +414,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(version, "2");
+        assert_eq!(version, CURRENT_SCHEMA_VERSION.to_string());
         let columns: i64 = conn.query_row("SELECT COUNT(*) FROM pragma_table_info('transfer_operations') WHERE name IN ('before_json','outcome_json','sent_at','source_indices_json','evidence_version')",[],|r|r.get(0)).unwrap();
         assert_eq!(columns, 5);
     }
