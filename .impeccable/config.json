@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "inter",
+        "files": [
+          "src/index.css"
+        ],
+        "createdAt": "2026-10-28T12:42:21.703Z",
+        "reason": "Codex decided: bundled Inter weights and the application font stack are intentional incumbent typography from commit 1f0e123; sync implementation preserves this unchanged visual system."
+      }
+    ]
+  }
+}
