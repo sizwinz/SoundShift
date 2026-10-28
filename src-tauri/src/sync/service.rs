@@ -114,6 +114,7 @@ pub async fn preview(
                 "ordering_conflict",
                 "anchor_conflict",
                 "removal_order_conflict",
+                "concurrent_addition",
             ]
             .contains(&c.code.as_str())
             {
@@ -144,18 +145,30 @@ pub async fn preview(
                 .track(target.other())
                 .ok_or("Source mapping missing")?
                 .clone();
-            let approved = pair
-                .baseline
-                .as_ref()
-                .and_then(|b| {
-                    b.occurrences
-                        .iter()
-                        .find(|o| o.track(target.other()).is_some_and(|t| t.id == source.id))
-                })
-                .and_then(|o| o.track(target))
-                .cloned();
-            if let Some(track) = approved {
-                entry.set_track(target, track);
+            let mut approved = std::collections::HashMap::new();
+            for mapping in pair
+                .approved_mappings
+                .iter()
+                .chain(pair.baseline.iter().flat_map(|b| &b.occurrences))
+            {
+                if mapping
+                    .track(target.other())
+                    .is_some_and(|t| t.id == source.id)
+                {
+                    if let Some(track) = mapping.track(target) {
+                        approved.insert(track.id.clone(), track.clone());
+                    }
+                }
+            }
+            if approved.len() == 1 {
+                entry.set_track(target, approved.into_values().next().unwrap());
+                continue;
+            }
+            if approved.len() > 1 {
+                let mut conflict=SyncConflict::new("match_required","More than one recording mapping was approved previously; choose the intended recording");
+                conflict.logical_id = Some(entry.logical_id.clone());
+                conflict.candidates = approved.into_values().collect();
+                plan.conflicts.push(conflict);
                 continue;
             }
             let matched = match_track(

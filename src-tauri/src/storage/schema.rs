@@ -48,6 +48,14 @@ fn ensure_sync_schema(conn: &Connection) -> Result<()> {
     )
 }
 
+/// Epochs describe credential changes, independently of the secret's storage location.
+pub fn note_credential_change(conn: &Connection, service: &str) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("INSERT INTO credential_generations(service,generation) VALUES(?1,1) ON CONFLICT(service) DO UPDATE SET generation=generation+1",[service])?;
+    tx.execute("UPDATE sync_pairs SET enabled=0,state='authentication_required',last_error='Account changed; revalidate this pair' WHERE pair_id IN (SELECT pair_id FROM sync_endpoints WHERE service=?1)",[service])?;
+    tx.commit()
+}
+
 fn ensure_column(
     conn: &Connection,
     table_name: &str,
@@ -119,6 +127,12 @@ fn ensure_indexes(conn: &Connection) -> Result<()> {
     ensure_column(conn, "transfer_operations", "before_json", "TEXT")?;
     ensure_column(conn, "transfer_operations", "outcome_json", "TEXT")?;
     ensure_column(conn, "transfer_operations", "sent_at", "INTEGER")?;
+    ensure_column(
+        conn,
+        "transfer_operations",
+        "retry_not_before_ms",
+        "INTEGER",
+    )?;
     ensure_column(conn, "transfer_operations", "source_indices_json", "TEXT")?;
     ensure_column(
         conn,
@@ -355,7 +369,7 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
     )?;
 
     ensure_indexes(conn)?;
-
+    ensure_sync_schema(conn)?;
     Ok(())
 }
 

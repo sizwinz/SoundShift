@@ -5,7 +5,7 @@
 
   <p>
     <a href="https://github.com/sizwinz/SoundShift"><img src="https://img.shields.io/badge/Tauri-v2.x-blue?style=flat-square&logo=tauri" alt="Tauri v2" /></a>
-    <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.80+-orange?style=flat-square&logo=rust" alt="Rust" /></a>
+    <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-stable-orange?style=flat-square&logo=rust" alt="Rust" /></a>
     <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react" alt="React 19" /></a>
     <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5.6-blue?style=flat-square&logo=typescript" alt="TypeScript" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="MIT License" /></a>
@@ -49,6 +49,13 @@ Never wonder what got transferred. Before a single song is added to your destina
 - **Ambiguous Matches (Amber)**: Multiple candidate songs found; pick the right one manually in seconds.
 - **Unresolved / Missing (Red)**: Clearly highlighted so you know exactly which tracks need attention.
 
+### Scheduled Two-Way Playlist Sync
+Open **Sync**, link existing editable Spotify and YouTube Music playlists, and review their initial merged songs and order. Apply the reviewed merge before enabling the optional hourly schedule. Checks continue while the app is open, including when minimized; closing SoundShift stops scheduling.
+
+Later runs propagate additions, removals, and ordering against a verified shared baseline. Intentional repeated songs remain separate occurrences. Approved mappings and exact matches can run automatically; conflicting edits, missing matches, incomplete reads, credential changes, and uncertain writes stop the pair for review. Names, descriptions, artwork, and visibility stay local.
+
+Sync requires recognized provider capabilities and verifies the ordered result on both services. Spotify duplicate-occurrence removal remains unsupported; changes to a Spotify baseline containing duplicates also require attribution review. YouTube Music writes require occurrence identifiers and recognized responses. Inspection, reconciliation, pause/resume/cancel, and guarded recovery are available from the Sync page; uncertain mutations are never replayed automatically. Unlinking preserves both remote playlists and recorded run history.
+
 ### 1-Click Snapshot Rollback
 Every transfer records an immutable snapshot and a durable mutation journal before writes. Transfer History lets you inspect outcomes, reconcile uncertain work, resume proven unsent or rejected operations, and request rollback. Rollback requires attributable occurrences and verified remote post-state. Legacy records and unsupported provider capabilities stop for manual review; whole-playlist deletion is refused when independent removal verification is unavailable.
 
@@ -70,7 +77,7 @@ Zero cloud servers. Zero analytics or tracking beacons. Your tokens, snapshots, 
 | **Spotify** | Yes | Yes | Yes | Yes | Native WebView session |
 | **YouTube Music** | Yes | Yes | Yes | Yes | Native WebView session |
 
-*Playlist writes are serialized for both providers. YouTube Music duplicate-occurrence preservation remains unsupported: disable deduplication only for selections without duplicate destination IDs; unsupported cases are refused before mutation.*
+*Playlist writes are serialized across transfers, sync, and recovery. The transfer workflow still refuses unsupported YouTube Music duplicate-preservation selections. Sync uses a separate occurrence-aware insertion path with receipt and ordered post-state verification. Live provider eligibility and native platform acceptance remain separate from local automated tests.*
 
 ---
 
@@ -101,7 +108,7 @@ Pre-built installers for Windows, macOS, and Linux will be available on the [Rel
 
 #### Prerequisites
 - **Node.js** (v22.12+; v24 recommended) and **npm**
-- **Rust** (stable toolchain, 1.80+)
+- **Rust** (current stable toolchain)
 - Platform build dependencies (MSVC on Windows, Xcode tools on macOS, WebKitGTK on Linux)
 
 #### Steps

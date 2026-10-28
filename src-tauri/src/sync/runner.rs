@@ -2,7 +2,7 @@ use super::{model::*, store};
 use crate::engine::lifecycle::{JobState, TransferControl};
 use crate::providers::{
     contracts::{MutationOutcome, PlaylistRead},
-    error::SendCertainty,
+    error::{is_retryable, retry_delay_ms, SendCertainty},
     traits::MusicProvider,
 };
 use rusqlite::{params, Connection, OptionalExtension};
@@ -12,8 +12,8 @@ pub type Providers = [Arc<dyn MusicProvider>; 2];
 pub type Database = Arc<Mutex<Connection>>;
 
 pub fn same_state(a: &PlaylistRead, b: &PlaylistRead) -> bool {
-    a.complete
-        && b.complete
+    validate_read(a).is_ok()
+        && validate_read(b).is_ok()
         && a.revision == b.revision
         && a.occurrences.len() == b.occurrences.len()
         && a.occurrences
@@ -95,6 +95,9 @@ pub fn prepare(pair: &SyncPair, plan: SyncPlan) -> Result<SyncRunData, String> {
                 id
             });
             used.insert(id.clone());
+            if let Some(linked) = all.iter_mut().find(|o| o.logical_id == id) {
+                linked.set_remote(side, occurrence.remote_id.clone());
+            }
             orders[side.index()].push(id);
         }
     }
@@ -230,8 +233,41 @@ pub fn load_data(conn: &Connection, job: &str) -> Result<SyncRunData, String> {
 pub fn inspect(conn: &Connection, job: &str) -> Result<SyncRunSummary, String> {
     let data = load_data(conn, job)?;
     let(state,event_seq,error):(String,u64,Option<String>)=conn.query_row("SELECT job_state,COALESCE((SELECT MAX(event_seq) FROM transfer_events WHERE job_id=?1),0),last_error FROM transfer_jobs WHERE job_id=?1",[job],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(|e|e.to_string())?;
-    let mut counts = data.counts.clone();
-    counts.unsent = usize::from(next_edit(&data).is_some());
+    let mut counts = SyncCounts::default();
+    (counts.added,counts.removed,counts.moved,counts.failed,counts.uncertain)=conn.query_row("SELECT COALESCE(SUM(status='confirmed' AND operation_type='sync_add'),0),COALESCE(SUM(status='confirmed' AND operation_type='sync_remove'),0),COALESCE(SUM(status='confirmed' AND operation_type='sync_move'),0),COALESCE(SUM(status='rejected'),0),COALESCE(SUM(status IN ('sent','uncertain')),0) FROM transfer_operations WHERE job_id=?1",[job],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(|e|e.to_string())?;
+    let desired: Vec<_> = data
+        .plan
+        .desired
+        .iter()
+        .map(|o| o.logical_id.clone())
+        .collect();
+    let desired_set: std::collections::HashSet<_> = desired.iter().collect();
+    let mut remaining = 0usize;
+    for side in Side::ALL {
+        let mut order = data.orders[side.index()].clone();
+        let present: std::collections::HashSet<_> = order.iter().cloned().collect();
+        let added: Vec<_> = desired
+            .iter()
+            .filter(|id| !present.contains(*id))
+            .cloned()
+            .collect();
+        remaining += added.len();
+        order.extend(added);
+        remaining += order.iter().filter(|id| !desired_set.contains(*id)).count();
+        order.retain(|id| desired_set.contains(id));
+        for (index, id) in desired.iter().enumerate() {
+            if order.get(index) != Some(id) {
+                let at = order
+                    .iter()
+                    .position(|entry| entry == id)
+                    .ok_or("Recorded occurrence order is malformed")?;
+                let entry = order.remove(at);
+                order.insert(index, entry);
+                remaining += 1;
+            }
+        }
+    }
+    counts.unsent = remaining.saturating_sub(counts.failed + counts.uncertain);
     Ok(SyncRunSummary {
         pair_id: data.plan.pair_id,
         job_id: job.into(),
@@ -361,7 +397,7 @@ pub async fn execute(
         conn.execute("UPDATE sync_pairs SET state='recovery_required',enabled=0,last_error=?2 WHERE pair_id=?1",params![pair.pair_id,error]).map_err(|e|e.to_string())?;
     }
     let conn = db.lock().map_err(|_| "Storage lock unavailable")?;
-    inspect(&conn, &job)
+    finish_summary(&conn, &job)
 }
 pub async fn resume(
     db: Database,
@@ -410,10 +446,18 @@ pub async fn resume(
         conn.execute("UPDATE sync_pairs SET enabled=0,state='recovery_required',last_error=?2 WHERE pair_id=?1",params![pair.pair_id,crate::diagnostics::sanitize_for_log(&error)]).map_err(|e|e.to_string())?;
     }
     let conn = db.lock().map_err(|_| "Storage lock unavailable")?;
-    inspect(&conn, job)
+    finish_summary(&conn, job)
+}
+fn finish_summary(conn: &Connection, job: &str) -> Result<SyncRunSummary, String> {
+    let summary = inspect(conn, job)?;
+    if summary.state == "cancelled" {
+        conn.execute("UPDATE sync_pairs SET state='cancelled',enabled=0,next_due_at=NULL,last_error='Sync cancelled; inspect this run before continuing' WHERE pair_id=?1",[&summary.pair_id]).map_err(|e|e.to_string())?;
+    }
+    Ok(summary)
 }
 pub fn validate_operations(conn: &Connection, job: &str) -> Result<(), String> {
-    let mut statement=conn.prepare("SELECT payload_json,payload_hash,status,sent_at,attempt_count,evidence_version,outcome_json,updated_at FROM transfer_operations WHERE job_id=?1 ORDER BY operation_index").map_err(|e|e.to_string())?;
+    crate::storage::recovery::ensure_job_replay_allowed(conn, job)?;
+    let mut statement=conn.prepare("SELECT payload_json,payload_hash,status,sent_at,attempt_count,evidence_version,outcome_json,updated_at,retry_not_before_ms FROM transfer_operations WHERE job_id=?1 ORDER BY operation_index").map_err(|e|e.to_string())?;
     let rows = statement
         .query_map([job], |r| {
             Ok((
@@ -425,12 +469,13 @@ pub fn validate_operations(conn: &Connection, job: &str) -> Result<(), String> {
                 r.get::<_, i64>(5)?,
                 r.get::<_, Option<String>>(6)?,
                 r.get::<_, i64>(7)?,
+                r.get::<_, Option<i64>>(8)?,
             ))
         })
         .map_err(|e| e.to_string())?;
     let mut retries = 0;
     for row in rows {
-        let (json, hash, status, sent, attempts, version, outcome, updated) =
+        let (json, hash, status, sent, attempts, version, outcome, updated, retry_deadline) =
             row.map_err(|e| e.to_string())?;
         if version != 3 || store::checksum(&json) != hash {
             return Err("Recorded sync operation checksum or version is invalid".into());
@@ -464,15 +509,18 @@ pub fn validate_operations(conn: &Connection, job: &str) -> Result<(), String> {
                 ) {
                     return Err("Uncertain sync operations cannot be replayed".into());
                 }
-                if attempts >= 3 {
+                if attempts >= 6 {
                     return Err("Sync operation retry limit reached; manual review required".into());
                 }
-                if error.retry_after_ms.is_some_and(|delay| {
-                    chrono::Utc::now().timestamp_millis()
-                        < (updated + 1)
+                let deadline = retry_deadline.or_else(|| {
+                    error.retry_after_ms.map(|delay| {
+                        (updated + 1)
                             .saturating_mul(1000)
                             .saturating_add(delay.min(i64::MAX as u64) as i64)
-                }) {
+                    })
+                });
+                if deadline.is_some_and(|deadline| chrono::Utc::now().timestamp_millis() < deadline)
+                {
                     return Err("Provider retry deadline has not elapsed; sync deferred".into());
                 }
             }
@@ -590,6 +638,30 @@ async fn drive(
             Ok(_) => Err("Provider mutation outcome uncertain; no replay permitted".into()),
             Err(error) => Err(error.to_string()),
         };
+        let attempts = {
+            let conn = db.lock().map_err(|_| "Storage lock unavailable")?;
+            conn.query_row(
+                "SELECT attempt_count FROM transfer_operations WHERE operation_id=?1",
+                [&operation_id],
+                |r| r.get::<_, u32>(0),
+            )
+            .map_err(|e| e.to_string())?
+        };
+        let retry_delay = result
+            .as_ref()
+            .err()
+            .filter(|error| {
+                matches!(
+                    error.certainty,
+                    SendCertainty::NotSent | SendCertainty::Rejected
+                ) && is_retryable(error.kind)
+            })
+            .map(|error| retry_delay_ms(attempts.saturating_sub(1), error.retry_after_ms));
+        let retry_deadline = retry_delay.map(|delay| {
+            chrono::Utc::now()
+                .timestamp_millis()
+                .saturating_add(delay.min(i64::MAX as u64) as i64)
+        });
         {
             let conn = db.lock().map_err(|_| "Storage lock unavailable")?;
             let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
@@ -606,6 +678,11 @@ async fn drive(
                 "uncertain"
             };
             tx.execute("UPDATE transfer_operations SET status=?2,certainty=?2,outcome_json=?3,provider_response=?4,updated_at=?5 WHERE operation_id=?1",params![operation_id,status,serde_json::to_string(&result).map_err(|e|e.to_string())?,verification.as_ref().err().map(|s|crate::diagnostics::sanitize_for_log(s)),chrono::Utc::now().timestamp()]).map_err(|e|e.to_string())?;
+            tx.execute(
+                "UPDATE transfer_operations SET retry_not_before_ms=?2 WHERE operation_id=?1",
+                params![operation_id, retry_deadline],
+            )
+            .map_err(|e| e.to_string())?;
             if let Ok((proposed, _)) = &verification {
                 save_data(&tx, &job, proposed)?;
             } else {
@@ -623,7 +700,27 @@ async fn drive(
         permit.checkpointed()?;
         match verification {
             Ok((proposed, _)) => *data = proposed,
-            Err(error) => return Err(error),
+            Err(error) => {
+                if let Some(delay) = retry_delay.filter(|delay| *delay <= 30_000 && attempts < 6) {
+                    let _ = delay;
+                    let deadline = retry_deadline.ok_or("Retry deadline missing")?;
+                    while chrono::Utc::now().timestamp_millis() < deadline {
+                        if !control.wait_until_ready().await? {
+                            control.finish().await?;
+                            return Ok(());
+                        }
+                        let remaining =
+                            (deadline - chrono::Utc::now().timestamp_millis()).max(0) as u64;
+                        control
+                            .interruptible_delay(std::time::Duration::from_millis(
+                                remaining.min(30_000),
+                            ))
+                            .await;
+                    }
+                    continue;
+                }
+                return Err(error);
+            }
         }
     }
     for side in Side::ALL {
@@ -643,6 +740,35 @@ async fn drive(
             completed.verified = true;
             save_data(conn, &job, &completed)?;
             let mut pair = store::get_pair(conn, &pair.pair_id)?;
+            if let Some(previous) = &pair.baseline {
+                for entry in &previous.occurrences {
+                    if !data
+                        .plan
+                        .desired
+                        .iter()
+                        .any(|o| o.logical_id == entry.logical_id)
+                        && !pair
+                            .tombstones
+                            .iter()
+                            .any(|o| o.logical_id == entry.logical_id)
+                    {
+                        pair.tombstones.push(entry.clone());
+                    }
+                }
+            }
+            for entry in data
+                .all
+                .iter()
+                .filter(|o| o.spotify.is_some() && o.ytmusic.is_some())
+            {
+                if !pair.approved_mappings.iter().any(|old| {
+                    old.spotify.as_ref().map(|t| &t.id) == entry.spotify.as_ref().map(|t| &t.id)
+                        && old.ytmusic.as_ref().map(|t| &t.id)
+                            == entry.ytmusic.as_ref().map(|t| &t.id)
+                }) {
+                    pair.approved_mappings.push(entry.clone());
+                }
+            }
             pair.baseline = Some(SyncBaseline {
                 version: data.plan.baseline_version + 1,
                 occurrences: data
@@ -666,6 +792,9 @@ async fn drive(
             store::save_pair(conn, &pair)
         })
         .await?;
+    if update.state == JobState::CompletedVerified {
+        crash_point("baseline_committed");
+    }
     if update.state == JobState::Cancelled {
         let conn = db.lock().map_err(|_| "Storage lock unavailable")?;
         conn.execute("UPDATE sync_pairs SET enabled=0,state='cancelled',last_error='Sync cancelled; inspect this run before continuing' WHERE pair_id=?1",[&pair.pair_id]).map_err(|e|e.to_string())?;

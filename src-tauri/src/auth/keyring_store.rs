@@ -282,9 +282,11 @@ fn store_credential_with(
             [service],
         )
         .map_err(|e| e.to_string())?;
+        crate::storage::schema::note_credential_change(conn, service).map_err(|e| e.to_string())?;
         return Ok(());
     }
-    store_platform_fallback(service, secret, conn)
+    store_platform_fallback(service, secret, conn)?;
+    crate::storage::schema::note_credential_change(conn, service).map_err(|e| e.to_string())
 }
 
 fn store_platform_fallback(service: &str, secret: &str, conn: &Connection) -> Result<(), String> {
@@ -307,14 +309,24 @@ fn store_platform_fallback(service: &str, secret: &str, conn: &Connection) -> Re
 /// Read legacy values only to migrate them into an OS-protected store. Never
 /// silently continue if secure migration cannot finish.
 pub fn retrieve_credential(service: &str, conn: &Connection) -> Result<Option<String>, String> {
-    if let Ok(entry) = Entry::new(SERVICE_NAME, service) {
-        if let Ok(password) = entry.get_password() {
-            if !password.is_empty() {
-                // Only a successful new vault write establishes that an older
-                // local row is obsolete. A read must not discard recovery data.
-                return Ok(Some(password));
-            }
-        }
+    retrieve_credential_with(service, conn, || {
+        Entry::new(SERVICE_NAME, service).ok()?.get_password().ok()
+    })
+}
+fn retrieve_credential_with(
+    service: &str,
+    conn: &Connection,
+    native_read: impl FnOnce() -> Option<String>,
+) -> Result<Option<String>, String> {
+    if let Some(password) = native_read().filter(|password| !password.is_empty()) {
+        // Establish metadata for credentials saved before sync existed. Never copy
+        // the vault secret or discard an older fallback during a read.
+        conn.execute(
+            "INSERT OR IGNORE INTO credential_generations(service,generation) VALUES(?1,1)",
+            [service],
+        )
+        .map_err(|e| e.to_string())?;
+        return Ok(Some(password));
     }
     retrieve_local_credential(service, conn)
 }
@@ -382,11 +394,18 @@ fn retrieve_local_credential_with(
 /// Purges credentials from both OS Keyring and SQLite service_sessions (D-04).
 /// Explicitly preserves reusable track match caches in track_match_cache.
 pub fn purge_credential(service: &str, conn: &Connection) -> Result<(), String> {
-    // Delete from OS Keyring
-    if let Ok(entry) = Entry::new(SERVICE_NAME, service) {
-        let _ = entry.delete_credential();
-    }
-
+    purge_credential_with(service, conn, || {
+        if let Ok(entry) = Entry::new(SERVICE_NAME, service) {
+            let _ = entry.delete_credential();
+        }
+    })
+}
+fn purge_credential_with(
+    service: &str,
+    conn: &Connection,
+    native_delete: impl FnOnce(),
+) -> Result<(), String> {
+    native_delete();
     // Delete session from SQLite database (preserving track_match_cache)
     conn.execute(
         "DELETE FROM service_sessions WHERE service_id = ?1",
@@ -394,7 +413,7 @@ pub fn purge_credential(service: &str, conn: &Connection) -> Result<(), String> 
     )
     .map_err(|e| e.to_string())?;
 
-    Ok(())
+    crate::storage::schema::note_credential_change(conn, service).map_err(|e| e.to_string())
 }
 
 /// Validates session status asynchronously in the background (D-07).
@@ -509,6 +528,56 @@ mod tests {
             })
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn native_only_credentials_receive_a_sync_generation_without_sqlite_secret() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        crate::storage::schema::run_migrations(&conn).unwrap();
+        store_credential_with("spotify", "native-fixture-secret", &conn, || Ok(())).unwrap();
+        let first = crate::sync::store::generation(&conn, "spotify").unwrap();
+        store_credential_with("spotify", "replacement-fixture-secret", &conn, || Ok(())).unwrap();
+        assert!(crate::sync::store::generation(&conn, "spotify").unwrap() > first);
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM service_sessions", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn existing_native_credential_bootstraps_generation_without_copying_secret() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        let value =
+            retrieve_credential_with("spotify", &conn, || Some("vault-fixture".into())).unwrap();
+        assert_eq!(value.as_deref(), Some("vault-fixture"));
+        assert_eq!(crate::sync::store::generation(&conn, "spotify").unwrap(), 1);
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM service_sessions", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn disconnecting_native_only_account_invalidates_saved_pair() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        retrieve_credential_with("spotify", &conn, || Some("vault-fixture".into())).unwrap();
+        conn.execute("INSERT INTO service_sessions(service_id,auth_data,updated_at) VALUES('ytmusic','fixture',1)",[]).unwrap();
+        let pair = crate::sync::store::create_pair(&conn, "a", "A", "b", "B").unwrap();
+        purge_credential_with("spotify", &conn, || {}).unwrap();
+        assert!(crate::sync::store::validate_generations(&conn, &pair).is_err());
+        assert_eq!(
+            crate::sync::store::get_pair(&conn, &pair.pair_id)
+                .unwrap()
+                .state,
+            "authentication_required"
+        );
     }
 
     #[test]

@@ -110,6 +110,10 @@ pub struct SyncPair {
     pub spotify: SyncEndpoint,
     pub ytmusic: SyncEndpoint,
     pub baseline: Option<SyncBaseline>,
+    #[serde(default)]
+    pub approved_mappings: Vec<LinkedOccurrence>,
+    #[serde(default)]
+    pub tombstones: Vec<LinkedOccurrence>,
     pub enabled: bool,
     pub state: String,
     pub next_due_at: Option<i64>,
@@ -197,6 +201,29 @@ pub struct SyncResolution {
     pub order: Vec<String>,
     pub choices: Vec<MatchChoice>,
     pub strategy: Option<Side>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncUpdate {
+    pub pair_id: String,
+    pub job_id: String,
+    pub state: String,
+    pub event_seq: u64,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncOperationRecord {
+    pub operation_id: String,
+    pub side: Side,
+    pub kind: EditKind,
+    pub status: String,
+    pub attempt_count: u32,
+    pub detail: Option<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncInspection {
+    pub summary: SyncRunSummary,
+    pub operations: Vec<SyncOperationRecord>,
+    pub can_resume: bool,
+    pub next_action: String,
 }
 impl SyncPlan {
     pub fn before(&self, side: Side) -> &PlaylistRead {

@@ -126,6 +126,51 @@ pub fn incremental_merge(
         .map(|o| o.logical_id.clone())
         .collect();
     let mut conflicts = vec![];
+    if a.iter()
+        .filter(|o| !baseline_ids.contains(o.logical_id.as_str()))
+        .any(|left| {
+            b.iter()
+                .filter(|o| !baseline_ids.contains(o.logical_id.as_str()))
+                .any(|right| {
+                    left.spotify
+                        .as_ref()
+                        .zip(right.ytmusic.as_ref())
+                        .is_some_and(|(a, b)| equivalent(a, b))
+                })
+        })
+    {
+        conflicts.push(SyncConflict::new("concurrent_addition","The same new recording was added independently on both services; review whether to keep one occurrence or both"));
+    }
+    let reordered = |current: &[LinkedOccurrence], present: &std::collections::HashSet<&str>| {
+        let actual: Vec<_> = current
+            .iter()
+            .filter(|o| baseline_ids.contains(o.logical_id.as_str()))
+            .map(|o| o.logical_id.as_str())
+            .collect();
+        let expected: Vec<_> = baseline
+            .occurrences
+            .iter()
+            .filter(|o| present.contains(o.logical_id.as_str()))
+            .map(|o| o.logical_id.as_str())
+            .collect();
+        actual != expected
+    };
+    if (baseline
+        .occurrences
+        .iter()
+        .any(|o| !a_ids.contains(o.logical_id.as_str()))
+        && reordered(&b, &b_ids))
+        || (baseline
+            .occurrences
+            .iter()
+            .any(|o| !b_ids.contains(o.logical_id.as_str()))
+            && reordered(&a, &a_ids))
+    {
+        conflicts.push(SyncConflict::new(
+            "removal_order_conflict",
+            "A removal overlaps concurrent ordering edits; review both playlists before writing",
+        ));
+    }
     let mut seen = std::collections::HashSet::new();
     if baseline
         .spotify

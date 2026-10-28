@@ -17,7 +17,12 @@ pub fn pair_stamp(pair: &SyncPair) -> Result<String, String> {
 }
 
 pub fn generation(conn: &Connection, service: &str) -> Result<i64, String> {
-    conn.query_row("SELECT generation FROM credential_generations WHERE service=?1 AND EXISTS(SELECT 1 FROM service_sessions WHERE service_id=?1)",[service],|r|r.get(0)).map_err(|_|format!("Reconnect {service} before linking or revalidating playlists"))
+    conn.query_row(
+        "SELECT generation FROM credential_generations WHERE service=?1",
+        [service],
+        |r| r.get(0),
+    )
+    .map_err(|_| format!("Reconnect {service} before linking or revalidating playlists"))
 }
 pub fn create_pair(
     conn: &Connection,
@@ -42,6 +47,8 @@ pub fn create_pair(
             generation: generation(conn, "ytmusic")?,
         },
         baseline: None,
+        approved_mappings: vec![],
+        tombstones: vec![],
         enabled: false,
         state: "draft".into(),
         next_due_at: None,
@@ -74,7 +81,9 @@ pub fn get_pair(conn: &Connection, id: &str) -> Result<SyncPair, String> {
 }
 pub fn list_pairs(conn: &Connection) -> Result<Vec<SyncPair>, String> {
     let mut stmt = conn
-        .prepare("SELECT pair_id FROM sync_pairs ORDER BY updated_at,pair_id")
+        .prepare(
+            "SELECT pair_id FROM sync_pairs WHERE state!='unlinked' ORDER BY updated_at,pair_id",
+        )
         .map_err(|e| e.to_string())?;
     let ids = stmt
         .query_map([], |r| r.get::<_, String>(0))
@@ -91,6 +100,9 @@ pub fn save_pair(conn: &Connection, pair: &SyncPair) -> Result<(), String> {
     Ok(())
 }
 pub fn validate_generations(conn: &Connection, pair: &SyncPair) -> Result<(), String> {
+    if pair.state == "unlinked" {
+        return Err("This playlist pair has been unlinked; no sync writes permitted".into());
+    }
     for side in Side::ALL {
         if generation(conn, side.service())? != pair.endpoint(side).generation {
             return Err("Account changed; revalidate this pair before syncing".into());
@@ -125,4 +137,22 @@ pub fn load_preview(conn: &Connection, id: &str) -> Result<SyncPlan, String> {
         return Err("Sync preview is stale; review a fresh preview".into());
     }
     Ok(plan)
+}
+
+pub fn unlink(conn: &Connection, id: &str) -> Result<(), String> {
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let active:i64=tx.query_row("SELECT COUNT(*) FROM sync_runs r JOIN transfer_jobs j ON j.job_id=r.job_id WHERE r.pair_id=?1 AND j.job_state IN ('planned','starting','running','pausing','paused','cancelling','reconciling')",[id],|r|r.get(0)).map_err(|e|e.to_string())?;
+    if active != 0 {
+        return Err(
+            "Cancel the active sync and wait for its requests to drain before unlinking".into(),
+        );
+    }
+    let mut pair = get_pair(&tx, id)?;
+    pair.state = "unlinked".into();
+    pair.enabled = false;
+    pair.next_due_at = None;
+    save_pair(&tx, &pair)?;
+    tx.execute("DELETE FROM sync_endpoints WHERE pair_id=?1", [id])
+        .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())
 }

@@ -142,9 +142,8 @@ pub async fn start_batch_transfer(
     config: BatchTransferConfig,
 ) -> Result<BatchTransferSummary, String> {
     let state = app.state::<AppState>();
-    let _mutation_guard = state.mutation_gate.clone().try_lock_owned().map_err(|_| {
-        "Another transfer or rollback is active. Wait for it to finish.".to_string()
-    })?;
+    let _mutation_guard =
+        crate::sync::runtime::acquire_gate(state.mutation_gate.clone(), &state.shutting_down)?;
     {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         crate::storage::recovery::ensure_mutations_allowed(&conn)?;
@@ -330,9 +329,8 @@ pub async fn execute_snapshot_rollback(
     delete_entire_playlist: bool,
 ) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let _mutation_guard = state.mutation_gate.clone().try_lock_owned().map_err(|_| {
-        "Another transfer or rollback is active. Wait for it to finish.".to_string()
-    })?;
+    let _mutation_guard =
+        crate::sync::runtime::acquire_gate(state.mutation_gate.clone(), &state.shutting_down)?;
     {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         crate::storage::recovery::ensure_mutations_allowed(&conn)?;
@@ -349,6 +347,7 @@ pub async fn execute_snapshot_rollback(
             .map_err(|e| format!("Snapshot not found: {}", e))?;
         let payload: crate::engine::snapshot::SnapshotPayload = serde_json::from_str(&payload_str)
             .map_err(|e| format!("Failed to parse snapshot: {}", e))?;
+        crate::storage::recovery::ensure_job_replay_allowed(&conn, &payload.job_id)?;
 
         let token =
             crate::auth::keyring_store::retrieve_credential(&payload.target_service, &conn)?
@@ -465,11 +464,8 @@ pub async fn acknowledge_storage_recovery(
     reviewed: bool,
 ) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let _guard = state
-        .mutation_gate
-        .clone()
-        .try_lock_owned()
-        .map_err(|_| "Wait for the active transfer or rollback to finish")?;
+    let _guard =
+        crate::sync::runtime::acquire_gate(state.mutation_gate.clone(), &state.shutting_down)?;
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     crate::storage::recovery::acknowledge_recovery(&conn, reviewed)
 }
@@ -512,11 +508,8 @@ pub async fn reconcile_transfer_job(
     job_id: String,
 ) -> Result<crate::engine::recovery::JobInspection, String> {
     let state = app.state::<AppState>();
-    let _guard = state
-        .mutation_gate
-        .clone()
-        .try_lock_owned()
-        .map_err(|_| "Wait for the active transfer or rollback to finish")?;
+    let _guard =
+        crate::sync::runtime::acquire_gate(state.mutation_gate.clone(), &state.shutting_down)?;
     let provider = recorded_job_provider(&app, &job_id)?;
     crate::engine::recovery::reconcile_job(&state.db, provider.as_ref(), &job_id, |update| {
         let _ = app.emit("job:state_changed", update);
@@ -530,14 +523,12 @@ pub async fn resume_recorded_transfer(
     job_id: String,
 ) -> Result<crate::engine::recovery::JobInspection, String> {
     let state = app.state::<AppState>();
-    let _guard = state
-        .mutation_gate
-        .clone()
-        .try_lock_owned()
-        .map_err(|_| "Wait for the active transfer or rollback to finish")?;
+    let _guard =
+        crate::sync::runtime::acquire_gate(state.mutation_gate.clone(), &state.shutting_down)?;
     {
         let conn = state.db.lock().map_err(|_| "Storage lock unavailable")?;
         crate::storage::recovery::ensure_mutations_allowed(&conn)?;
+        crate::storage::recovery::ensure_job_replay_allowed(&conn, &job_id)?;
     }
     let provider = recorded_job_provider(&app, &job_id)?;
     let event_app = app.clone();

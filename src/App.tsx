@@ -8,6 +8,7 @@ import { TransferTargetOptions } from "./components/diff/TransferConfirmModal";
 import { TelemetryDrawer } from "./components/transfer/TelemetryDrawer";
 import { TransferHistory } from "./components/history/TransferHistory";
 import { SettingsPage } from "./components/settings/SettingsPage";
+import { SyncPage } from "./components/sync/SyncPage";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { AudioProvider } from "./context/AudioContext";
 import { TransferProvider, useTransfer } from "./context/TransferContext";
@@ -72,6 +73,8 @@ function MainContent() {
         return activePlaylist ? `Review & Diff / ${activePlaylist.title}` : "Review & Diff Staging";
       case "history":
         return "Transfer History & Snapshots";
+      case "sync":
+        return "Playlist Sync";
       case "accounts":
         return "Streaming Accounts";
       case "settings":
@@ -147,6 +150,7 @@ function MainContent() {
                 )}
 
                 {activeTab === "settings" && <SettingsPage />}
+                {activeTab === "sync" && <SyncPage />}
               </div>
             </main>
           )}

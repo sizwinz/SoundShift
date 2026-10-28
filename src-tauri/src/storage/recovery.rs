@@ -232,6 +232,7 @@ fn mark_restored_database(conn: &Connection) -> Result<(), String> {
             .map_err(|e| e.to_string())?
     };
     for id in ids {
+        conn.execute("INSERT INTO transfer_manifest_state(key,value,updated_at) VALUES(?1,'Restored journal cannot prove absence of later remote writes',?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",rusqlite::params![format!("restore_fenced:{id}"),chrono::Utc::now().timestamp()]).map_err(|e|e.to_string())?;
         set_job_state(conn, &id, "recovery_required", Some(RESTORE_NOTICE))?;
     }
     conn.execute(
@@ -253,6 +254,20 @@ pub fn ensure_mutations_allowed(conn: &Connection) -> Result<(), String> {
         Some(notice) => Err(notice),
         None => Ok(()),
     }
+}
+
+pub fn ensure_job_replay_allowed(conn: &Connection, job_id: &str) -> Result<(), String> {
+    let fenced: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM transfer_manifest_state WHERE key=?1)",
+            [format!("restore_fenced:{job_id}")],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if fenced {
+        return Err("This job came from a restored database; later remote writes cannot be excluded. Manual review is required; no replay permitted".into());
+    }
+    Ok(())
 }
 
 pub fn recovery_notice(conn: &Connection) -> Result<Option<String>, String> {

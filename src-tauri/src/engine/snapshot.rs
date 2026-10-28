@@ -405,6 +405,33 @@ pub(crate) fn persist_job_state_in_transaction(
             |row| row.get(0),
         )
         .map_err(|e| e.to_string())?;
+    let mut payload = serde_json::json!({"job_id":job_id,"state":state,"event_seq":seq});
+    let has_sync: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='sync_runs')",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if has_sync {
+        use rusqlite::OptionalExtension;
+        let pair: Option<String> = conn
+            .query_row(
+                "SELECT pair_id FROM sync_runs WHERE job_id=?1",
+                [job_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if let Some(pair) = pair {
+            payload["pair_id"] = serde_json::json!(pair);
+        }
+    }
+    conn.execute(
+        "UPDATE transfer_events SET event_payload=?3 WHERE job_id=?1 AND event_seq=?2",
+        rusqlite::params![job_id, seq, payload.to_string()],
+    )
+    .map_err(|e| e.to_string())?;
     Ok(seq)
 }
 
