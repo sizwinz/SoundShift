@@ -178,7 +178,7 @@ async fn pace_batch(control: &TransferControl) {
         .await;
 }
 
-fn consume_retry_budget(budget: &AtomicU32) -> bool {
+pub(crate) fn consume_retry_budget(budget: &AtomicU32) -> bool {
     let mut current = budget.load(Ordering::SeqCst);
     loop {
         if current == 0 {

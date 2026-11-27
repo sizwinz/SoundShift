@@ -398,11 +398,22 @@ impl MusicProvider for MemoryProvider {
         ids: &[String],
     ) -> Result<MutationOutcome, ProviderError> {
         self.attempts.fetch_add(1, Ordering::SeqCst);
-        if self
-            .rejections
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
-            .is_ok()
-        {
+        let mut remaining = self.rejections.load(Ordering::SeqCst);
+        let rejected = loop {
+            if remaining == 0 {
+                break false;
+            }
+            match self.rejections.compare_exchange_weak(
+                remaining,
+                remaining - 1,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => break true,
+                Err(actual) => remaining = actual,
+            }
+        };
+        if rejected {
             let mut error = ProviderError::new(
                 crate::providers::error::ProviderErrorKind::RateLimited,
                 crate::providers::error::SendCertainty::Rejected,

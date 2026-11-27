@@ -513,7 +513,9 @@ pub async fn resume_job(
     control.start()?;
     let work:Result<(),String>=async {
         for operation in inspection.operations.iter().filter(|o|o.can_retry()) {
-            if operation.attempt_count>0 && budget.fetch_update(std::sync::atomic::Ordering::SeqCst,std::sync::atomic::Ordering::SeqCst,|n|n.checked_sub(1)).is_err() {return Err("Per-job retry budget exhausted; manual review required".into());}
+            if operation.attempt_count > 0 && !crate::engine::worker::consume_retry_budget(&budget) {
+                return Err("Per-job retry budget exhausted; manual review required".into());
+            }
             {
                 let conn=db.lock().map_err(|_|"Recovery storage lock unavailable")?;
                 if operation.retry_not_before_ms.is_some_and(|deadline|chrono::Utc::now().timestamp_millis()<deadline) {return Err("Provider retry guidance still defers this operation; retry later".into());}
