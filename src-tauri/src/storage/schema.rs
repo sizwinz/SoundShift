@@ -1,7 +1,7 @@
 use rusqlite::{Connection, OptionalExtension, Result};
 use std::collections::HashSet;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 3;
+pub const CURRENT_SCHEMA_VERSION: i64 = 4;
 
 fn ensure_sync_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
@@ -233,6 +233,25 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         "TEXT NOT NULL DEFAULT ''",
     )?;
 
+    ensure_column(conn, "cached_tracks", "service", "TEXT NOT NULL DEFAULT ''")?;
+    ensure_column(
+        conn,
+        "cached_tracks",
+        "updated_at",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_column(conn, "track_match_cache", "target_track_json", "TEXT")?;
+
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS app_preferences (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_cached_tracks_service_pl
+            ON cached_tracks(service, playlist_id);",
+    )?;
+
     ensure_indexes(conn)?;
 
     ensure_sync_schema(conn)?;
@@ -266,6 +285,7 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
             match_method TEXT NOT NULL,
             confidence REAL NOT NULL,
             created_at INTEGER NOT NULL,
+            target_track_json TEXT,
             PRIMARY KEY (source_service, source_track_id, target_service)
         );
 
@@ -358,7 +378,15 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
             track_id TEXT NOT NULL,
             position INTEGER NOT NULL,
             track_data TEXT NOT NULL,
+            service TEXT NOT NULL DEFAULT '',
+            updated_at INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY(playlist_id, track_id, position)
+        );
+
+        CREATE TABLE IF NOT EXISTS app_preferences (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at INTEGER NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS transfer_manifest_state (
@@ -388,6 +416,7 @@ mod tests {
             "sync_previews",
             "sync_runs",
             "credential_generations",
+            "app_preferences",
         ] {
             let found: i64 = conn
                 .query_row(
@@ -398,7 +427,7 @@ mod tests {
                 .unwrap();
             assert_eq!(found, 1, "missing {table}");
         }
-        assert_eq!(CURRENT_SCHEMA_VERSION, 3);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 4);
         assert_eq!(
             conn.query_row(
                 "SELECT auth_data FROM service_sessions WHERE service_id='fixture'",
@@ -431,6 +460,74 @@ mod tests {
         assert_eq!(version, CURRENT_SCHEMA_VERSION.to_string());
         let columns: i64 = conn.query_row("SELECT COUNT(*) FROM pragma_table_info('transfer_operations') WHERE name IN ('before_json','outcome_json','sent_at','source_indices_json','evidence_version')",[],|r|r.get(0)).unwrap();
         assert_eq!(columns, 5);
+    }
+
+    #[test]
+    fn version_three_migrates_to_v4_preserving_cache_and_adding_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE schema_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL);
+             INSERT INTO schema_metadata VALUES ('schema_version', '3', 1000);
+             CREATE TABLE service_sessions (service_id TEXT PRIMARY KEY, auth_data TEXT NOT NULL, expires_at INTEGER, updated_at INTEGER NOT NULL);
+             CREATE TABLE track_match_cache (
+                 source_service TEXT NOT NULL,
+                 source_track_id TEXT NOT NULL,
+                 target_service TEXT NOT NULL,
+                 target_track_id TEXT NOT NULL,
+                 match_method TEXT NOT NULL,
+                 confidence REAL NOT NULL,
+                 created_at INTEGER NOT NULL,
+                 PRIMARY KEY (source_service, source_track_id, target_service)
+             );
+             INSERT INTO track_match_cache VALUES ('spotify', 's1', 'ytmusic', 'y1', 'isrc', 1.0, 1000);
+             CREATE TABLE cached_playlists (id TEXT PRIMARY KEY, service TEXT NOT NULL, title TEXT NOT NULL, description TEXT, track_count INTEGER NOT NULL, is_public INTEGER NOT NULL, cover_url TEXT, updated_at INTEGER NOT NULL);
+             CREATE TABLE cached_tracks (playlist_id TEXT NOT NULL, track_id TEXT NOT NULL, position INTEGER NOT NULL, track_data TEXT NOT NULL, PRIMARY KEY(playlist_id, track_id, position));
+             CREATE TABLE transfer_jobs (job_id TEXT PRIMARY KEY, source_service TEXT NOT NULL, target_service TEXT NOT NULL, source_playlist_name TEXT NOT NULL, target_playlist_id TEXT NOT NULL, total_tracks INTEGER NOT NULL, matched_tracks INTEGER NOT NULL, created_at INTEGER NOT NULL);
+             CREATE TABLE transfer_operations (operation_id TEXT PRIMARY KEY, job_id TEXT NOT NULL, operation_type TEXT NOT NULL, operation_index INTEGER NOT NULL, payload_hash TEXT NOT NULL, certainty TEXT NOT NULL DEFAULT 'ambiguous', status TEXT NOT NULL DEFAULT 'pending', attempt_count INTEGER NOT NULL DEFAULT 0, provider_response TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+             CREATE TABLE transfer_events (event_id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL, event_type TEXT NOT NULL, event_payload TEXT NOT NULL, event_seq INTEGER NOT NULL, created_at INTEGER NOT NULL);
+             CREATE TABLE transfer_snapshots (snapshot_id TEXT PRIMARY KEY, job_id TEXT NOT NULL, mutation_payload TEXT NOT NULL, is_rolled_back INTEGER DEFAULT 0, created_at INTEGER NOT NULL);
+             CREATE TABLE transfer_backups (backup_id TEXT PRIMARY KEY, created_at INTEGER NOT NULL, database_path TEXT NOT NULL, wal_path TEXT, checksum TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'ready');
+             CREATE TABLE transfer_quarantine (quarantine_id TEXT PRIMARY KEY, job_id TEXT, reason TEXT NOT NULL, backup_id TEXT, diagnostics TEXT NOT NULL, created_at INTEGER NOT NULL);
+             CREATE TABLE transfer_manifest_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL);"
+        ).unwrap();
+
+        run_migrations(&conn).unwrap();
+
+        let version: i64 = conn
+            .query_row(
+                "SELECT CAST(value AS INTEGER) FROM schema_metadata WHERE key='schema_version'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, 4);
+
+        let cached_cols: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('cached_tracks') WHERE name IN ('service', 'updated_at')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(cached_cols, 2);
+
+        let cache_json_col: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('track_match_cache') WHERE name = 'target_track_json'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(cache_json_col, 1);
+
+        let preserved_target: String = conn
+            .query_row(
+                "SELECT target_track_id FROM track_match_cache WHERE source_track_id='s1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(preserved_target, "y1");
     }
 
     #[test]

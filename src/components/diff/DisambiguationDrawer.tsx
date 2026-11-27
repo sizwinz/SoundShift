@@ -4,6 +4,7 @@ import { MatchResult } from "../../types/diff";
 import { SourceTrack } from "../../types/provider";
 import { CandidateCard } from "./CandidateCard";
 import { AudioPlayButton } from "./AudioPlayButton";
+import { isTauri } from "../../utils/tauri";
 import {
   X,
   Search,
@@ -13,15 +14,23 @@ import {
   Fingerprint,
   AlertCircle,
   Loader2,
+  ChevronLeft,
+  ChevronRight,
+  SkipForward,
 } from "lucide-react";
 import { Button, Card, Badge } from "../ui";
 
 interface DisambiguationDrawerProps {
   matchResult: MatchResult | null;
+  sourceService?: string;
   targetService: string;
   isOpen: boolean;
   onClose: () => void;
   onResolve: (sourceTrackId: string, resolvedTrack: SourceTrack) => void;
+  unresolvedPosition?: number;
+  totalUnresolved?: number;
+  onResolveAndNext?: (sourceTrackId: string, resolvedTrack: SourceTrack) => void;
+  onNavigateUnresolved?: (delta: -1 | 1) => void;
 }
 
 function formatDuration(ms: number): string {
@@ -33,10 +42,15 @@ function formatDuration(ms: number): string {
 
 export const DisambiguationDrawer: React.FC<DisambiguationDrawerProps> = ({
   matchResult,
+  sourceService = "spotify",
   targetService,
   isOpen,
   onClose,
   onResolve,
+  unresolvedPosition,
+  totalUnresolved = 0,
+  onResolveAndNext,
+  onNavigateUnresolved,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearching, setIsSearching] = useState(false);
@@ -46,6 +60,7 @@ export const DisambiguationDrawer: React.FC<DisambiguationDrawerProps> = ({
   const [urlInput, setUrlInput] = useState("");
   const [isResolvingUrl, setIsResolvingUrl] = useState(false);
   const [urlError, setUrlError] = useState<string | null>(null);
+  const [advanceOnSelect, setAdvanceOnSelect] = useState(true);
 
   useEffect(() => {
     if (matchResult) {
@@ -59,19 +74,42 @@ export const DisambiguationDrawer: React.FC<DisambiguationDrawerProps> = ({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isOpen) {
+      if (!isOpen) return;
+      if (e.key === "Escape") {
         onClose();
+      } else if (e.altKey && e.key === "ArrowLeft" && onNavigateUnresolved) {
+        e.preventDefault();
+        onNavigateUnresolved(-1);
+      } else if (e.altKey && e.key === "ArrowRight" && onNavigateUnresolved) {
+        e.preventDefault();
+        onNavigateUnresolved(1);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, onNavigateUnresolved]);
 
   if (!isOpen || !matchResult) {
     return null;
   }
 
   const { source_track, candidates, matched_track } = matchResult;
+
+  const commitResolution = (resolvedTrack: SourceTrack) => {
+    if (isTauri()) {
+      void invoke("save_manual_match_override", {
+        sourceService,
+        sourceTrackId: source_track.id,
+        targetService,
+        targetTrack: resolvedTrack,
+      }).catch(() => {});
+    }
+    if (advanceOnSelect && onResolveAndNext && totalUnresolved > 1) {
+      onResolveAndNext(source_track.id, resolvedTrack);
+    } else {
+      onResolve(source_track.id, resolvedTrack);
+    }
+  };
 
   const handleExecuteSearch = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -106,11 +144,11 @@ export const DisambiguationDrawer: React.FC<DisambiguationDrawerProps> = ({
     setUrlError(null);
 
     try {
-      const resolved = await invoke<SourceTrack>("resolve_track_url", {
+      const resolved = await invoke<SourceTrack>("resolve_track_by_url", {
         service: targetService,
         url: trimmedUrl,
       });
-      onResolve(source_track.id, resolved);
+      commitResolution(resolved);
     } catch (err: unknown) {
       setUrlError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -123,38 +161,67 @@ export const DisambiguationDrawer: React.FC<DisambiguationDrawerProps> = ({
       role="dialog"
       aria-modal="true"
       aria-labelledby="drawer-title"
-      className="fixed inset-0 z-50 overflow-hidden bg-black/70 backdrop-blur-md animate-in fade-in duration-200"
+      className="fixed inset-0 z-50 overflow-hidden bg-black/70 backdrop-blur-md animate-in fade-in duration-200 dialog-overscroll"
     >
       <div className="absolute inset-0" onClick={onClose} />
 
       <aside className="absolute inset-y-0 right-0 max-w-full flex pl-10">
         <div className="w-screen max-w-xl bg-[#09090d] border-l border-white/[0.08] shadow-2xl flex flex-col justify-between">
           {/* Header */}
-          <div className="p-5 border-b border-white/[0.06] bg-[#0c0c12]/80 flex items-start justify-between">
-            <div>
-              <h2 id="drawer-title" className="text-sm font-bold text-zinc-100 flex items-center gap-2">
+          <div className="p-5 border-b border-white/[0.06] bg-[#0c0c12]/80 flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 id="drawer-title" className="text-sm font-bold text-zinc-100 flex items-center gap-2 flex-wrap">
                 <span>Disambiguation Review</span>
-                <Badge variant={matchResult.status === "Ambiguous" ? "amber" : "unmatched"}>
+                <Badge variant={matchResult.status === "Ambiguous" ? "amber" : matchResult.status === "Exact" ? "exact" : "unmatched"}>
                   {matchResult.status}
                 </Badge>
+                {unresolvedPosition !== undefined && totalUnresolved > 0 && (
+                  <span className="text-[11px] font-mono text-zinc-400 font-normal tabular-nums">
+                    {unresolvedPosition} of {totalUnresolved} unresolved
+                  </span>
+                )}
               </h2>
               <p className="text-[11px] text-zinc-400 mt-0.5">
                 Compare source metadata against candidate recommendations or provide a custom match.
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={onClose}
-              className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.06] transition-colors cursor-pointer"
-              aria-label="Close drawer"
-            >
-              <X className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-1 shrink-0">
+              {onNavigateUnresolved && totalUnresolved > 1 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => onNavigateUnresolved(-1)}
+                    className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.06] transition-colors cursor-pointer"
+                    title="Previous unresolved track (Alt+Left)"
+                    aria-label="Previous unresolved track"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onNavigateUnresolved(1)}
+                    className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.06] transition-colors cursor-pointer"
+                    title="Next unresolved track (Alt+Right)"
+                    aria-label="Next unresolved track"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={onClose}
+                className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.06] transition-colors cursor-pointer"
+                aria-label="Close drawer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
           {/* Scrollable Content Viewport */}
-          <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          <div className="flex-1 overflow-y-auto p-5 space-y-5 dialog-overscroll">
             {/* Source Track Card */}
             <div>
               <div className="text-[10px] font-mono uppercase tracking-wider text-zinc-500 font-semibold mb-2">
@@ -177,7 +244,7 @@ export const DisambiguationDrawer: React.FC<DisambiguationDrawerProps> = ({
 
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
-                      <span className="text-sm font-semibold text-zinc-100 truncate">
+                      <span className="text-sm font-semibold text-zinc-100 truncate select-text">
                         {source_track.title}
                       </span>
                       {source_track.is_explicit && (
@@ -186,7 +253,7 @@ export const DisambiguationDrawer: React.FC<DisambiguationDrawerProps> = ({
                         </span>
                       )}
                     </div>
-                    <div className="text-xs text-zinc-400 truncate mt-0.5">
+                    <div className="text-xs text-zinc-400 truncate mt-0.5 select-text">
                       {source_track.artists.join(", ")}
                     </div>
                     <div className="text-[11px] text-zinc-500 truncate mt-1 flex items-center gap-2 font-mono tabular-nums">
@@ -197,12 +264,12 @@ export const DisambiguationDrawer: React.FC<DisambiguationDrawerProps> = ({
                       {source_track.album && (
                         <>
                           <span>•</span>
-                          <span className="truncate font-sans">{source_track.album}</span>
+                          <span className="truncate font-sans select-text">{source_track.album}</span>
                         </>
                       )}
                     </div>
                     {source_track.isrc && (
-                      <div className="text-[10px] text-zinc-600 font-mono mt-1 flex items-center gap-1">
+                      <div className="text-[10px] text-zinc-600 font-mono mt-1 flex items-center gap-1 select-text">
                         <Fingerprint className="w-3 h-3" />
                         <span>ISRC: {source_track.isrc}</span>
                       </div>
@@ -210,7 +277,7 @@ export const DisambiguationDrawer: React.FC<DisambiguationDrawerProps> = ({
                   </div>
 
                   <div className="shrink-0 pt-1">
-                    <AudioPlayButton track={source_track} size="sm" />
+                    <AudioPlayButton track={source_track} size="sm" service={sourceService} />
                   </div>
                 </div>
               </Card>
@@ -238,8 +305,9 @@ export const DisambiguationDrawer: React.FC<DisambiguationDrawerProps> = ({
                       key={cand.track.id}
                       candidate={cand}
                       rank={index + 1}
+                      targetService={targetService}
                       isSelected={matched_track?.id === cand.track.id}
-                      onSelect={(track) => onResolve(source_track.id, track)}
+                      onSelect={commitResolution}
                     />
                   ))}
                 </div>
@@ -274,7 +342,7 @@ export const DisambiguationDrawer: React.FC<DisambiguationDrawerProps> = ({
               </form>
 
               {searchError && (
-                <div className="mt-2 p-2.5 bg-rose-950/30 border border-rose-500/30 rounded-lg text-rose-300 text-xs flex items-center gap-2">
+                <div role="alert" className="mt-2 p-2.5 bg-rose-950/30 border border-rose-500/30 rounded-lg text-rose-300 text-xs flex items-center gap-2 select-text">
                   <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                   <span className="text-[11px]">{searchError}</span>
                 </div>
@@ -292,8 +360,9 @@ export const DisambiguationDrawer: React.FC<DisambiguationDrawerProps> = ({
                         duration_delta_ms: Math.abs(t.duration_ms - source_track.duration_ms),
                       }}
                       rank={idx + 1}
+                      targetService={targetService}
                       isSelected={matched_track?.id === t.id}
-                      onSelect={(track) => onResolve(source_track.id, track)}
+                      onSelect={commitResolution}
                     />
                   ))}
                 </div>
@@ -328,7 +397,7 @@ export const DisambiguationDrawer: React.FC<DisambiguationDrawerProps> = ({
               </form>
 
               {urlError && (
-                <div className="mt-2 p-2.5 bg-rose-950/30 border border-rose-500/30 rounded-lg text-rose-300 text-xs flex items-center gap-2">
+                <div role="alert" className="mt-2 p-2.5 bg-rose-950/30 border border-rose-500/30 rounded-lg text-rose-300 text-xs flex items-center gap-2 select-text">
                   <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                   <span className="text-[11px]">{urlError}</span>
                 </div>
@@ -337,13 +406,38 @@ export const DisambiguationDrawer: React.FC<DisambiguationDrawerProps> = ({
           </div>
 
           {/* Footer */}
-          <div className="p-4 border-t border-white/[0.06] bg-[#0c0c12]/90 flex items-center justify-between">
-            <span className="text-[11px] text-zinc-500">
-              Resolved choices update staged matches immediately.
-            </span>
-            <Button variant="secondary" size="sm" onClick={onClose}>
-              Done
-            </Button>
+          <div className="p-4 border-t border-white/[0.06] bg-[#0c0c12]/90 flex items-center justify-between gap-2 flex-wrap">
+            {totalUnresolved > 1 && onResolveAndNext ? (
+              <label className="flex items-center gap-2 text-[11px] text-zinc-400 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={advanceOnSelect}
+                  onChange={(e) => setAdvanceOnSelect(e.target.checked)}
+                  className="rounded border-white/[0.2] bg-zinc-900 accent-emerald-500"
+                />
+                <span>Save & Next Unresolved automatically</span>
+              </label>
+            ) : (
+              <span className="text-[11px] text-zinc-500">
+                Resolved choices update staged matches and local cache.
+              </span>
+            )}
+
+            <div className="flex items-center gap-2">
+              {onNavigateUnresolved && totalUnresolved > 1 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onNavigateUnresolved(1)}
+                >
+                  <SkipForward className="w-3.5 h-3.5" />
+                  <span>Skip to Next Unresolved</span>
+                </Button>
+              )}
+              <Button variant="secondary" size="sm" onClick={onClose}>
+                Done
+              </Button>
+            </div>
           </div>
         </div>
       </aside>

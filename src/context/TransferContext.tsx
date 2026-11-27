@@ -10,6 +10,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "../utils/tauri";
+import { readSoundShiftSettings } from "../components/settings/SettingsPage";
 import {
   TransferStage,
   LifecycleUpdate,
@@ -128,6 +129,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
 
         const uLog = await listen<TransferLogPayload>("transfer:log", (event) => {
           if (event.payload.job_id !== activeJobId.current) return;
+          if (!readSoundShiftSettings().keepTransferLogs) return;
           setLogs((prev) => [event.payload, ...prev.slice(0, 199)]);
         });
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { Playlist } from "../../types/provider";
@@ -16,9 +16,13 @@ import {
   Lock,
   Globe,
   Loader2,
+  Upload,
 } from "lucide-react";
 import { ProviderLogo } from "../providers/ProviderLogo";
 import { Button, Card, Badge, SearchInput } from "../ui";
+import { parsePlaylistId } from "../diff/TransferConfirmModal";
+import { readSoundShiftSettings } from "../settings/SettingsPage";
+import { importPlaylistContent } from "../../utils/playlistFormats";
 
 interface PlaylistSelectorProps {
   onMatchComplete: (
@@ -42,6 +46,25 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
   const [isLoadingPlaylists, setIsLoadingPlaylists] = useState(false);
   const [playlistError, setPlaylistError] = useState<string | null>(null);
   const [playlistSearch, setPlaylistSearch] = useState("");
+  const [customPlaylistInput, setCustomPlaylistInput] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const focusSearch = () => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    };
+    const openImport = () => {
+      fileInputRef.current?.click();
+    };
+    window.addEventListener("soundshift:focus-search", focusSearch);
+    window.addEventListener("soundshift:open-import", openImport);
+    return () => {
+      window.removeEventListener("soundshift:focus-search", focusSearch);
+      window.removeEventListener("soundshift:open-import", openImport);
+    };
+  }, []);
 
   // Matching / Ingest Progress State
   const [isProcessing, setIsProcessing] = useState(false);
@@ -108,12 +131,13 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
     setPlaylistError(null);
   };
 
-  const handleStartMatching = async () => {
-    if (!selectedPlaylist || !isSourceConnected || !isTargetConnected) return;
+  const runMatchingForPlaylist = async (playlist: Playlist) => {
+    if (!isSourceConnected || !isTargetConnected) return;
 
+    setSelectedPlaylist(playlist);
     setIsProcessing(true);
     setProgressStage("ingesting");
-    setProgressMessage(`Ingesting ${selectedPlaylist.title} tracks...`);
+    setProgressMessage(`Ingesting ${playlist.title} tracks...`);
     setProgressPercent(10);
     setPlaylistError(null);
 
@@ -127,17 +151,22 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
         tracks: unknown[];
       }>("playlist:ingest_progress", (event) => {
         const loaded = event.payload.loaded;
-        const total = selectedPlaylist.track_count || 1;
-        const pct = Math.min(45, Math.round((loaded / Math.max(total, 1)) * 45));
+        const total = Math.max(playlist.track_count || loaded || 1, 1);
+        const pct = Math.min(45, Math.round((loaded / total) * 45));
         setProgressPercent(pct);
         setProgressMessage(`Ingested ${loaded} of ${total} tracks...`);
       });
 
-      await invoke("fetch_playlist_tracks", {
+      const ingested = await invoke<unknown[]>("fetch_playlist_tracks", {
         service: sourceService,
-        playlistId: selectedPlaylist.id,
+        playlistId: playlist.id,
         refresh: false,
       });
+
+      const resolvedPlaylist: Playlist =
+        playlist.track_count > 0
+          ? playlist
+          : { ...playlist, track_count: Array.isArray(ingested) ? ingested.length : 0 };
 
       setProgressStage("matching");
       setProgressMessage("Analyzing matches across target catalog...");
@@ -158,17 +187,19 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
         }
       );
 
+      const settings = readSoundShiftSettings();
       const results = await invoke<MatchResult[]>("execute_playlist_matching", {
         sourceService,
         targetService,
-        playlistId: selectedPlaylist.id,
+        playlistId: resolvedPlaylist.id,
+        matchingConcurrency: settings.matchingConcurrency,
       });
 
       setProgressPercent(100);
       setProgressMessage("Matching complete. Loading staging diff...");
 
       setTimeout(() => {
-        onMatchComplete(results, selectedPlaylist, sourceService, targetService);
+        onMatchComplete(results, resolvedPlaylist, sourceService, targetService);
       }, 300);
     } catch (err: unknown) {
       setPlaylistError(err instanceof Error ? err.message : String(err));
@@ -180,6 +211,109 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
     }
   };
 
+  const handleStartMatching = async () => {
+    if (!selectedPlaylist) return;
+    await runMatchingForPlaylist(selectedPlaylist);
+  };
+
+  const handleImportCustomPlaylist = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const parsedId = parsePlaylistId(customPlaylistInput);
+    if (!parsedId) {
+      setPlaylistError("Paste a valid Spotify or YouTube Music playlist URL or ID.");
+      return;
+    }
+
+    const existing = playlists.find((p) => p.id === parsedId);
+    const candidate: Playlist = existing ?? {
+      id: parsedId,
+      service: sourceService as ServiceId,
+      title: `Imported Playlist (${parsedId})`,
+      description: "Loaded via playlist URL or ID",
+      track_count: 0,
+      is_public: true,
+    };
+
+    if (!existing) {
+      setPlaylists((prev) => [candidate, ...prev]);
+    }
+    setSelectedPlaylist(candidate);
+    setCustomPlaylistInput("");
+
+    if (isSourceConnected && isTargetConnected) {
+      await runMatchingForPlaylist(candidate);
+    }
+  };
+
+  const handleFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+
+    if (!isTargetConnected) {
+      setPlaylistError(
+        `Connect your ${targetService === "spotify" ? "Spotify" : "YouTube Music"} account before matching an imported playlist.`
+      );
+      return;
+    }
+
+    let unlistenMatching: UnlistenFn | null = null;
+    try {
+      const content = await file.text();
+      const parsed = importPlaylistContent(file.name, content);
+      const customPlaylist: Playlist = {
+        id: `import_${Date.now()}`,
+        service: sourceService as ServiceId,
+        title: parsed.title,
+        description: `Imported from ${file.name}`,
+        track_count: parsed.tracks.length,
+        is_public: true,
+      };
+
+      setSelectedPlaylist(customPlaylist);
+      setIsProcessing(true);
+      setProgressStage("matching");
+      setProgressMessage(`Matching ${parsed.tracks.length} imported tracks...`);
+      setProgressPercent(25);
+      setPlaylistError(null);
+
+      unlistenMatching = await listen<MatchingProgressPayload>(
+        "matching:progress",
+        (event) => {
+          const { processed, total, current_track, current_result } = event.payload;
+          const pct = 25 + Math.round((processed / Math.max(total, 1)) * 73);
+          setProgressPercent(pct);
+          const trackTitle = current_track || current_result?.source_track?.title;
+          setProgressMessage(
+            trackTitle
+              ? `Matching "${trackTitle}" (${processed} of ${total})...`
+              : `Matching track ${processed} of ${total}...`
+          );
+        }
+      );
+
+      const settings = readSoundShiftSettings();
+      const results = await invoke<MatchResult[]>("match_custom_tracks", {
+        sourceService,
+        targetService,
+        tracks: parsed.tracks,
+        matchingConcurrency: settings.matchingConcurrency,
+      });
+
+      setProgressPercent(100);
+      setProgressMessage("Matching complete. Loading staging diff...");
+      setTimeout(() => {
+        onMatchComplete(results, customPlaylist, sourceService, targetService);
+      }, 250);
+    } catch (err: unknown) {
+      setPlaylistError(err instanceof Error ? err.message : String(err));
+      setIsProcessing(false);
+      setProgressStage("idle");
+    } finally {
+      if (unlistenMatching) unlistenMatching();
+    }
+  };
+
   const filteredPlaylists = useMemo(() => {
     if (!playlistSearch.trim()) return playlists;
     const query = playlistSearch.toLowerCase();
@@ -187,7 +321,9 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
   }, [playlists, playlistSearch]);
 
   return (
-    <div className="flex flex-col gap-5 max-w-[1440px] mx-auto w-full pb-20">
+    <div className="flex flex-col flex-1 min-h-0 h-full w-full overflow-hidden bg-[#000000]">
+      <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
+        <div className="flex flex-col gap-5 max-w-[1440px] mx-auto w-full p-4 sm:p-5 lg:p-6">
       {/* Route Selector Card */}
       <Card className="p-4 bg-[#0a0a0e] border-white/[0.08]">
         <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
@@ -210,7 +346,7 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
                 type="button"
                 onClick={() => handleSourceChange("spotify")}
                 disabled={isProcessing}
-                className={`flex items-center justify-center gap-2 p-2.5 rounded-lg border text-xs font-medium transition-all cursor-pointer ${
+                className={`flex items-center justify-center gap-2 p-2.5 h-[42px] rounded-lg border text-xs font-medium transition-all cursor-pointer ${
                   sourceService === "spotify"
                     ? "bg-[#181822] text-zinc-100 border-white/[0.2] shadow-sm ring-1 ring-white/[0.1]"
                     : "bg-[#0f0f14] text-zinc-400 border-white/[0.06] hover:bg-[#14141c]"
@@ -224,7 +360,7 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
                 type="button"
                 onClick={() => handleSourceChange("ytmusic")}
                 disabled={isProcessing}
-                className={`flex items-center justify-center gap-2 p-2.5 rounded-lg border text-xs font-medium transition-all cursor-pointer ${
+                className={`flex items-center justify-center gap-2 p-2.5 h-[42px] rounded-lg border text-xs font-medium transition-all cursor-pointer ${
                   sourceService === "ytmusic"
                     ? "bg-[#181822] text-zinc-100 border-white/[0.2] shadow-sm ring-1 ring-white/[0.1]"
                     : "bg-[#0f0f14] text-zinc-400 border-white/[0.06] hover:bg-[#14141c]"
@@ -237,12 +373,12 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
           </div>
 
           {/* Swap Direction Button */}
-          <div className="flex items-center justify-center pt-2 md:pt-4">
+          <div className="flex items-center justify-center md:self-end shrink-0">
             <button
               type="button"
               onClick={handleSwapServices}
               disabled={isProcessing}
-              className="p-2 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-zinc-400 hover:text-zinc-100 transition-colors cursor-pointer"
+              className="h-[42px] w-[42px] flex items-center justify-center rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-zinc-400 hover:text-zinc-100 transition-colors cursor-pointer disabled:opacity-50"
               title="Swap transfer direction"
               aria-label="Swap transfer direction"
             >
@@ -314,24 +450,66 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
       )}
 
       {/* Playlist Grid Header with Search */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pt-1">
         <div>
           <h3 className="text-sm font-semibold text-zinc-100">Select Playlist to Migrate</h3>
           <p className="text-xs text-zinc-500">
-            Choose a playlist from {sourceService === "spotify" ? "Spotify" : "YouTube Music"} to stage for transfer.
+            Choose a playlist from {sourceService === "spotify" ? "Spotify" : "YouTube Music"} or paste a public URL/ID to stage.
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json,.csv,.m3u,.m3u8"
+            onChange={handleFileImport}
+            className="hidden"
+            aria-label="Import playlist file"
+          />
+
           {isSourceConnected && (
-            <SearchInput
-              value={playlistSearch}
-              onChange={(e) => setPlaylistSearch(e.target.value)}
-              onClear={() => setPlaylistSearch("")}
-              placeholder="Search playlists..."
-              className="w-48 sm:w-56"
-            />
+            <>
+              <form onSubmit={handleImportCustomPlaylist} className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={customPlaylistInput}
+                  onChange={(e) => setCustomPlaylistInput(e.target.value)}
+                  disabled={isProcessing}
+                  placeholder="Paste playlist URL or ID..."
+                  aria-label="Import playlist URL or ID"
+                  className="w-44 sm:w-52 bg-[#121217] border border-white/[0.08] focus:border-emerald-500/60 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none transition-colors"
+                />
+                <Button
+                  type="submit"
+                  variant="secondary"
+                  size="sm"
+                  disabled={!customPlaylistInput.trim() || isProcessing}
+                >
+                  Load URL
+                </Button>
+              </form>
+              <SearchInput
+                inputRef={searchInputRef}
+                value={playlistSearch}
+                onChange={(e) => setPlaylistSearch(e.target.value)}
+                onClear={() => setPlaylistSearch("")}
+                placeholder="Search playlists..."
+                className="w-44 sm:w-52"
+              />
+            </>
           )}
+
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isProcessing || !isTargetConnected}
+            title="Import playlist from JSON, CSV, or M3U8 file"
+          >
+            <Upload className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Import File</span>
+          </Button>
 
           <Button
             variant="secondary"
@@ -436,10 +614,12 @@ export const PlaylistSelector: React.FC<PlaylistSelectorProps> = ({
           )}
         </div>
       )}
+        </div>
+      </div>
 
-      {/* Floating Action Footer when Playlist is Selected */}
+      {/* Scoped Bottom Action Footer when Source Account is Connected */}
       {isSourceConnected && (
-        <div className="fixed inset-x-0 bottom-0 z-40 h-16 border-t border-white/[0.08] bg-[#08080a]/95 px-4 shadow-[0_-12px_36px_rgba(0,0,0,0.7)] backdrop-blur-xl lg:left-[210px]">
+        <div className="shrink-0 h-16 border-t border-white/[0.08] bg-[#08080a]/95 px-4 sm:px-5 lg:px-6 shadow-[0_-12px_36px_rgba(0,0,0,0.7)] backdrop-blur-xl">
           <div className="mx-auto flex h-full max-w-[1440px] items-center justify-between gap-4">
             <div className="min-w-0 text-xs text-zinc-400">
               {selectedPlaylist ? (

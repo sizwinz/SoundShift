@@ -23,6 +23,77 @@ pub fn generate_sapisid_hash_with_timestamp(sapisid: &str, origin: &str, timesta
     format!("SAPISIDHASH {}_{}", timestamp, hash)
 }
 
+fn sapisid_digest_scheme(scheme: &str, sapisid: &str, origin: &str, timestamp: u64) -> String {
+    let payload = format!("{} {} {}", timestamp, sapisid, origin);
+    let mut hasher = Sha1::new();
+    hasher.update(payload.as_bytes());
+    let hash = format!("{:x}", hasher.finalize());
+    format!("{} {}_{}", scheme, timestamp, hash)
+}
+
+fn extract_cookie_value<'a>(cookie_str: &'a str, name: &str) -> Option<&'a str> {
+    cookie_str.split(';').find_map(|part| {
+        let mut kv = part.trim().splitn(2, '=');
+        let k = kv.next()?.trim();
+        let v = kv.next()?.trim();
+        if k == name && !v.is_empty() {
+            Some(v)
+        } else {
+            None
+        }
+    })
+}
+
+/// Builds the full InnerTube `Authorization` header (`SAPISIDHASH` plus `SAPISID1PHASH` /
+/// `SAPISID3PHASH` when `__Secure-1PAPISID` or `__Secure-3PAPISID` cookies are present).
+pub fn generate_youtube_auth_header(
+    cookie_str: &str,
+    fallback_sapisid: &str,
+    origin: &str,
+) -> String {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    generate_youtube_auth_header_with_timestamp(cookie_str, fallback_sapisid, origin, timestamp)
+}
+
+pub fn generate_youtube_auth_header_with_timestamp(
+    cookie_str: &str,
+    fallback_sapisid: &str,
+    origin: &str,
+    timestamp: u64,
+) -> String {
+    let primary = extract_cookie_value(cookie_str, "SAPISID")
+        .or_else(|| extract_cookie_value(cookie_str, "__Secure-3PAPISID"))
+        .or_else(|| extract_cookie_value(cookie_str, "__Secure-1PAPISID"))
+        .unwrap_or(fallback_sapisid);
+
+    let mut tokens = vec![sapisid_digest_scheme(
+        "SAPISIDHASH",
+        primary,
+        origin,
+        timestamp,
+    )];
+    if let Some(p1) = extract_cookie_value(cookie_str, "__Secure-1PAPISID") {
+        tokens.push(sapisid_digest_scheme(
+            "SAPISID1PHASH",
+            p1,
+            origin,
+            timestamp,
+        ));
+    }
+    if let Some(p3) = extract_cookie_value(cookie_str, "__Secure-3PAPISID") {
+        tokens.push(sapisid_digest_scheme(
+            "SAPISID3PHASH",
+            p3,
+            origin,
+            timestamp,
+        ));
+    }
+    tokens.join(" ")
+}
+
 /// Simple cookie representation for extractor functions.
 #[derive(Debug, Clone)]
 pub struct RawCookie {
@@ -41,9 +112,9 @@ pub fn parse_spotify_cookie(cookies: &[RawCookie]) -> Option<String> {
 /// Extracts the YouTube Music session cookies (full cookie string containing SAPISID, SID/HSID/SSID).
 pub fn parse_ytmusic_cookie(cookies: &[RawCookie]) -> Option<String> {
     // 1. Must contain SAPISID or __Secure-3PAPISID to calculate SAPISIDHASH
-    let has_sapisid = cookies
-        .iter()
-        .any(|c| c.name == "SAPISID" || c.name == "__Secure-3PAPISID");
+    let has_sapisid = cookies.iter().any(|c| {
+        c.name == "SAPISID" || c.name == "__Secure-3PAPISID" || c.name == "__Secure-1PAPISID"
+    });
     if !has_sapisid {
         return None;
     }
@@ -165,5 +236,18 @@ mod tests {
             value: "sid_only".into(),
         }];
         assert_eq!(parse_ytmusic_cookie(&no_sapisid), None);
+    }
+
+    #[test]
+    fn test_youtube_auth_header_includes_multi_cookie_hashes() {
+        let header = generate_youtube_auth_header_with_timestamp(
+            "SAPISID=base; __Secure-1PAPISID=p1; __Secure-3PAPISID=p3",
+            "fallback",
+            "https://music.youtube.com",
+            1700000000,
+        );
+        assert!(header.contains("SAPISIDHASH 1700000000_"));
+        assert!(header.contains("SAPISID1PHASH 1700000000_"));
+        assert!(header.contains("SAPISID3PHASH 1700000000_"));
     }
 }

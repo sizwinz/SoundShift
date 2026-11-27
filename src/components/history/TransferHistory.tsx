@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   History,
@@ -9,16 +9,22 @@ import {
   RefreshCw,
   Music,
   CheckCircle2,
+  ClipboardCopy,
+  Check,
+  Download,
 } from "lucide-react";
 import { TransferHistoryEntry, AuditResult } from "../../types/transfer";
 import { RecoveryActions } from "./RecoveryActions";
 import { RollbackModal } from "./RollbackModal";
 import { isTauri } from "../../utils/tauri";
-import { Card, Button, Badge } from "../ui";
+import { downloadTextFile } from "../../utils/playlistFormats";
+import { Card, Button, Badge, SearchInput } from "../ui";
 
 interface TransferHistoryProps {
   onBrowsePlaylists?: () => void;
 }
+
+type HistoryFilter = "all" | "recovery" | "verified" | "rolled_back";
 
 export const TransferHistory: React.FC<TransferHistoryProps> = ({
   onBrowsePlaylists,
@@ -32,6 +38,9 @@ export const TransferHistory: React.FC<TransferHistoryProps> = ({
   const [activeRollbackSnapshot, setActiveRollbackSnapshot] =
     useState<TransferHistoryEntry | null>(null);
   const [auditingJobId, setAuditingJobId] = useState<string | null>(null);
+  const [filterMode, setFilterMode] = useState<HistoryFilter>("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [copiedReport, setCopiedReport] = useState(false);
 
   const loadHistory = useCallback(async () => {
     setIsLoading(true);
@@ -96,14 +105,81 @@ export const TransferHistory: React.FC<TransferHistoryProps> = ({
     }
   };
 
+  const handleCopyDiagnosticReport = async () => {
+    try {
+      let reportText: string;
+      if (isTauri()) {
+        try {
+          reportText = await invoke<string>("get_sanitized_diagnostic_report");
+        } catch {
+          reportText = JSON.stringify(
+            {
+              generated_at: new Date().toISOString(),
+              recovery_notice: recoveryNotice,
+              jobs: history.map((h) => ({
+                job_id: h.job_id,
+                source_service: h.source_service,
+                target_service: h.target_service,
+                job_state: h.job_state,
+                recovery_required: h.recovery_required,
+                matched_tracks: h.matched_tracks,
+                added_tracks_count: h.added_tracks_count,
+                is_rolled_back: h.is_rolled_back,
+              })),
+            },
+            null,
+            2,
+          );
+        }
+      } else {
+        reportText = JSON.stringify(history, null, 2);
+      }
+      await navigator.clipboard?.writeText(reportText);
+      setCopiedReport(true);
+      window.setTimeout(() => setCopiedReport(false), 1800);
+    } catch (err) {
+      setError(`Could not copy diagnostic report: ${String(err)}`);
+    }
+  };
+
   const totalMigrations = history.length;
   const totalTracks = history.reduce((acc, h) => acc + h.matched_tracks, 0);
   const totalRolledBack = history.filter((h) => h.is_rolled_back).length;
+  const recoveryPendingCount = history.filter(
+    (h) =>
+      h.recovery_required ||
+      ["recovery_required", "manual_review", "reconciling", "rolling_back"].includes(
+        h.job_state,
+      ),
+  ).length;
+  const hasIntegrityIssue = Boolean(recoveryNotice) || recoveryPendingCount > 0;
+
+  const filteredHistory = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return history.filter((entry) => {
+      const needsRecovery =
+        entry.recovery_required ||
+        ["recovery_required", "manual_review", "reconciling", "rolling_back"].includes(
+          entry.job_state,
+        );
+      if (filterMode === "recovery" && !needsRecovery) return false;
+      if (filterMode === "rolled_back" && !entry.is_rolled_back) return false;
+      if (filterMode === "verified" && (entry.is_rolled_back || needsRecovery)) return false;
+      if (q) {
+        const matchTitle = entry.source_playlist_name.toLowerCase().includes(q);
+        const matchService =
+          entry.source_service.toLowerCase().includes(q) ||
+          entry.target_service.toLowerCase().includes(q);
+        if (!matchTitle && !matchService) return false;
+      }
+      return true;
+    });
+  }, [history, filterMode, searchQuery]);
 
   return (
     <div className="flex flex-col gap-6 max-w-[1440px] mx-auto w-full pb-16">
       {/* Header */}
-      <div className="flex items-center justify-between pb-3 border-b border-white/[0.08]">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-white/[0.08]">
         <div>
           <h1 className="text-base font-semibold text-zinc-100 flex items-center gap-2">
             <History className="w-4 h-4 text-emerald-400" />
@@ -114,15 +190,30 @@ export const TransferHistory: React.FC<TransferHistoryProps> = ({
           </p>
         </div>
 
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={loadHistory}
-          disabled={isLoading}
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
-          <span>Refresh</span>
-        </Button>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleCopyDiagnosticReport}
+            disabled={history.length === 0 && !recoveryNotice}
+          >
+            {copiedReport ? (
+              <Check className="w-3.5 h-3.5 text-emerald-400" />
+            ) : (
+              <ClipboardCopy className="w-3.5 h-3.5" />
+            )}
+            <span>{copiedReport ? "Copied Report" : "Copy Report"}</span>
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={loadHistory}
+            disabled={isLoading}
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
+            <span>Refresh</span>
+          </Button>
+        </div>
       </div>
 
       {error && (
@@ -179,14 +270,60 @@ export const TransferHistory: React.FC<TransferHistoryProps> = ({
           </div>
         </Card>
 
-        <Card className="p-4 bg-[#0a0a0e]">
+        <Card className={`p-4 bg-[#0a0a0e] ${hasIntegrityIssue ? "border-amber-500/35" : ""}`}>
           <div className="text-[10px] uppercase font-mono tracking-wider text-zinc-500 font-semibold">Local Integrity</div>
-          <div className="text-xl font-bold text-emerald-400 font-mono mt-1 flex items-center gap-1.5">
-            <ShieldCheck className="w-5 h-5 text-emerald-400" />
-            <span className="font-sans text-sm font-semibold">Active</span>
-          </div>
+          {hasIntegrityIssue ? (
+            <div className="text-xl font-bold text-amber-300 font-mono mt-1 flex items-center gap-1.5">
+              <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
+              <span className="font-sans text-sm font-semibold">
+                {recoveryPendingCount > 0 ? `${recoveryPendingCount} Pending` : "Review Required"}
+              </span>
+            </div>
+          ) : (
+            <div className="text-xl font-bold text-emerald-400 font-mono mt-1 flex items-center gap-1.5">
+              <ShieldCheck className="w-5 h-5 text-emerald-400 shrink-0" />
+              <span className="font-sans text-sm font-semibold">Verified</span>
+            </div>
+          )}
         </Card>
       </div>
+
+      {/* Filter & Search Bar */}
+      {history.length > 0 && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {(
+              [
+                { id: "all", label: "All", count: history.length },
+                { id: "recovery", label: "Needs Recovery", count: recoveryPendingCount },
+                { id: "verified", label: "Completed", count: history.filter((h) => !h.is_rolled_back && !h.recovery_required).length },
+                { id: "rolled_back", label: "Rolled Back", count: totalRolledBack },
+              ] as const
+            ).map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setFilterMode(tab.id)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
+                  filterMode === tab.id
+                    ? "bg-[#14141c] text-zinc-100 border-white/[0.14]"
+                    : "bg-transparent text-zinc-400 border-transparent hover:bg-white/[0.04]"
+                }`}
+              >
+                {tab.label} ({tab.count})
+              </button>
+            ))}
+          </div>
+
+          <SearchInput
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onClear={() => setSearchQuery("")}
+            placeholder="Filter history by playlist..."
+            className="w-full sm:w-64"
+          />
+        </div>
+      )}
 
       {/* History Items List */}
       {history.length === 0 ? (
@@ -209,18 +346,56 @@ export const TransferHistory: React.FC<TransferHistoryProps> = ({
             </Button>
           )}
         </Card>
+      ) : filteredHistory.length === 0 ? (
+        <Card className="p-8 text-center text-xs text-zinc-400 bg-[#09090d]/40 border-dashed border-white/[0.1]">
+          No history records match the active filter.
+        </Card>
       ) : (
         <div className="space-y-3">
-          {history.map((entry) => {
+          {filteredHistory.map((entry) => {
             const formattedDate = new Date(entry.created_at * 1000).toLocaleString();
             const isAuditing = auditingJobId === entry.job_id;
+            const needsRecovery =
+              entry.recovery_required ||
+              ["recovery_required", "manual_review", "reconciling", "rolling_back"].includes(
+                entry.job_state,
+              );
+
+            const recoveryNode = (
+              <RecoveryActions
+                jobId={entry.job_id}
+                onRollback={() => setActiveRollbackSnapshot(entry)}
+                onChanged={(inspection) =>
+                  setHistory((previous) =>
+                    previous.map((item) =>
+                      item.job_id === inspection.job_id
+                        ? {
+                            ...item,
+                            job_state: inspection.state,
+                            recovery_required: [
+                              "recovery_required",
+                              "manual_review",
+                              "reconciling",
+                              "rolling_back",
+                            ].includes(inspection.state),
+                            added_tracks_count: inspection.counts.confirmed,
+                            is_rolled_back: inspection.state === "rolled_back",
+                          }
+                        : item
+                    )
+                  )
+                }
+              />
+            );
 
             return (
               <Card
                 key={entry.job_id}
                 className={`p-4 transition-all ${
                   entry.is_rolled_back
-                    ? "bg-[#08080c]/50 border-white/[0.04] opacity-75"
+                    ? "bg-[#08080c]/60 border-white/[0.04] opacity-75"
+                    : needsRecovery
+                    ? "bg-[#110c0c] border-amber-500/30"
                     : "bg-[#0b0b10] border-white/[0.08] hover:border-white/[0.16]"
                 }`}
               >
@@ -254,12 +429,14 @@ export const TransferHistory: React.FC<TransferHistoryProps> = ({
                           </Badge>
                         ) : (
                           <Badge variant="connected" icon={<CheckCircle2 className="w-3 h-3 text-emerald-400" />}>
-                            {entry.job_state === "completed_verified" ? "Completed and verified" : entry.job_state.replaceAll("_", " ")}
+                            {entry.job_state === "completed_verified"
+                              ? "Completed and verified"
+                              : entry.job_state.replaceAll("_", " ")}
                           </Badge>
                         )}
                       </div>
 
-                      <div className="flex items-center gap-2 text-xs text-zinc-400 mt-1 font-mono">
+                      <div className="flex items-center gap-2 text-xs text-zinc-400 mt-1 font-mono flex-wrap">
                         <span className="capitalize">{entry.source_service}</span>
                         <ArrowRight className="w-3 h-3 text-zinc-600" />
                         <span className="capitalize">{entry.target_service}</span>
@@ -272,6 +449,22 @@ export const TransferHistory: React.FC<TransferHistoryProps> = ({
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() =>
+                        downloadTextFile(
+                          `soundshift-snapshot-${entry.job_id}.json`,
+                          JSON.stringify(entry, null, 2),
+                          "application/json",
+                        )
+                      }
+                      title="Export snapshot summary JSON"
+                    >
+                      <Download className="w-3 h-3" />
+                      <span>Export JSON</span>
+                    </Button>
+
                     {!entry.is_rolled_back && !entry.recovery_required && (
                       <Button
                         variant="secondary"
@@ -296,7 +489,17 @@ export const TransferHistory: React.FC<TransferHistoryProps> = ({
                     )}
                   </div>
                 </div>
-                {(!entry.is_rolled_back || entry.recovery_required) && <RecoveryActions jobId={entry.job_id} onRollback={()=>setActiveRollbackSnapshot(entry)} onChanged={inspection=>setHistory(previous=>previous.map(item=>item.job_id===inspection.job_id ? {...item,job_state:inspection.state,recovery_required:["recovery_required","manual_review","reconciling","rolling_back"].includes(inspection.state),added_tracks_count:inspection.counts.confirmed,is_rolled_back:inspection.state==="rolled_back"} : item))} />}
+
+                {needsRecovery ? (
+                  recoveryNode
+                ) : !entry.is_rolled_back ? (
+                  <details className="mt-3 text-xs text-zinc-500">
+                    <summary className="cursor-pointer select-none hover:text-zinc-300 transition-colors">
+                      Operations & Recovery Log
+                    </summary>
+                    {recoveryNode}
+                  </details>
+                ) : null}
               </Card>
             );
           })}

@@ -20,6 +20,7 @@ interface SidebarProps {
   onOpenAccounts?: () => void;
   ytStatus?: "connected" | "expired" | "disconnected";
   spotifyStatus?: "connected" | "expired" | "disconnected";
+  badges?: Partial<Record<NavTab, number>>;
 }
 
 export function Sidebar({
@@ -28,6 +29,7 @@ export function Sidebar({
   onOpenAccounts,
   ytStatus = "disconnected",
   spotifyStatus = "disconnected",
+  badges = {},
 }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
@@ -101,12 +103,18 @@ export function Sidebar({
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
+            const badgeCount = badges[item.id] ?? 0;
+            const badgeStyle =
+              item.id === "history" || item.id === "sync"
+                ? "bg-amber-500/20 text-amber-300 border-amber-500/35"
+                : "bg-emerald-500/20 text-emerald-300 border-emerald-500/35";
             return (
               <button
                 key={item.id}
                 type="button"
+                aria-current={isActive ? "page" : undefined}
                 onClick={() => onTabChange(item.id)}
-                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-150 cursor-pointer ${
+                className={`relative w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-150 cursor-pointer ${
                   isActive
                     ? "bg-[#14141a] text-zinc-100 border border-white/[0.1] shadow-xs"
                     : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04] border border-transparent"
@@ -114,7 +122,21 @@ export function Sidebar({
                 title={isCollapsed ? item.label : undefined}
               >
                 <Icon className={`w-4 h-4 shrink-0 ${isActive ? "text-emerald-400" : ""}`} />
-                {!isCollapsed && <span>{item.label}</span>}
+                {!isCollapsed && <span className="truncate">{item.label}</span>}
+                {badgeCount > 0 &&
+                  (isCollapsed ? (
+                    <span
+                      className={`absolute top-1.5 right-2.5 w-2 h-2 rounded-full ${
+                        item.id === "history" || item.id === "sync" ? "bg-amber-400" : "bg-emerald-400"
+                      }`}
+                    />
+                  ) : (
+                    <span
+                      className={`ml-auto px-1.5 py-0.5 rounded-full text-[10px] font-mono tabular-nums border ${badgeStyle}`}
+                    >
+                      {badgeCount}
+                    </span>
+                  ))}
               </button>
             );
           })}

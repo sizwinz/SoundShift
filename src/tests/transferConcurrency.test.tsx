@@ -12,7 +12,7 @@ it("uses one ordered playlist writer even when older preferences request eight",
   const track={id:"a",title:"fixture",artists:[],duration_ms:0,is_explicit:false,is_playable:true};
   try {
     await act(async()=>root.render(<TransferConfirmModal isOpen onClose={()=>{}} onConfirm={onConfirm} targetService="spotify" results={[{source_track:track,matched_track:track,status:"Exact",confidence:1,candidates:[]}]} selectedTrackIds={new Set(["a"])} />));
-    await act(async()=>Array.from(container.querySelectorAll("button")).find(b=>b.textContent?.includes("Confirm & Start"))!.click());
+    await act(async()=>Array.from(document.body.querySelectorAll("button")).find(b=>b.textContent?.includes("Confirm & Start"))!.click());
     expect(onConfirm.mock.calls[0][0].concurrency).toBe(1);
     await act(async()=>root.render(<SettingsPage/>));
     const control=container.querySelector<HTMLInputElement>('input[aria-label="Concurrent workers"]')!;

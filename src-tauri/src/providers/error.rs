@@ -28,6 +28,14 @@ impl ProviderError {
         }
     }
     pub fn http(status: u16, headers: &reqwest::header::HeaderMap) -> Self {
+        Self::http_with_detail(status, headers, None)
+    }
+
+    pub fn http_with_detail(
+        status: u16,
+        headers: &reqwest::header::HeaderMap,
+        body_detail: Option<&str>,
+    ) -> Self {
         let kind = match status {
             401 => ProviderErrorKind::Authentication,
             403 => ProviderErrorKind::Permission,
@@ -54,24 +62,81 @@ impl ProviderError {
                             })
                     })
             });
+        let base_detail = format!(
+            "Provider {:?} (HTTP {}); review the recorded operation before retry",
+            kind, status
+        );
+        let detail = match body_detail.map(str::trim).filter(|d| !d.is_empty()) {
+            Some(extra) => crate::diagnostics::sanitize_for_log(&format!(
+                "Provider {:?} (HTTP {}): {}",
+                kind, status, extra
+            )),
+            None => base_detail,
+        };
         Self {
             kind,
             http_status: Some(status),
             retry_after_ms,
-            certainty: if matches!(status, 401 | 403 | 429) {
+            certainty: if matches!(status, 400 | 401 | 403 | 404 | 422 | 429) {
                 SendCertainty::Rejected
             } else {
                 SendCertainty::MayHaveApplied
             },
-            detail: format!(
-                "Provider {:?} (HTTP {}); review the recorded operation before retry",
-                kind, status
-            ),
+            detail,
         }
     }
     pub fn read_http(status: u16, headers: &reqwest::header::HeaderMap) -> Self {
+        Self::read_http_with_context("Provider", None, status, headers)
+    }
+
+    pub fn read_http_for(
+        provider: &str,
+        action: &str,
+        status: u16,
+        headers: &reqwest::header::HeaderMap,
+    ) -> Self {
+        Self::read_http_with_context(provider, Some(action), status, headers)
+    }
+
+    fn read_http_with_context(
+        provider: &str,
+        action: Option<&str>,
+        status: u16,
+        headers: &reqwest::header::HeaderMap,
+    ) -> Self {
         let mut error = Self::http(status, headers);
         error.certainty = SendCertainty::NotSent;
+        let context = action
+            .map(str::trim)
+            .filter(|a| !a.is_empty())
+            .map(|a| format!(" while {a}"))
+            .unwrap_or_default();
+        error.detail = if status == 429 {
+            match error.retry_after_ms {
+                Some(ms) if ms > 0 => format!(
+                    "{provider} RateLimited (HTTP 429){context}; wait {}s before retrying",
+                    ms.div_ceil(1000).max(1)
+                ),
+                _ => format!(
+                    "{provider} RateLimited (HTTP 429){context}; too many requests, wait a moment and retry"
+                ),
+            }
+        } else if matches!(status, 401 | 403) {
+            let target = if provider.eq_ignore_ascii_case("provider") {
+                "account".to_string()
+            } else {
+                provider.to_string()
+            };
+            format!(
+                "{provider} {:?} (HTTP {}){context}; reconnect {target} and retry",
+                error.kind, status
+            )
+        } else {
+            format!(
+                "{provider} {:?} (HTTP {}){context}; provider read failed",
+                error.kind, status
+            )
+        };
         error
     }
     pub fn read_transport(error: reqwest::Error) -> Self {
@@ -234,5 +299,19 @@ mod tests {
         let kind = classify_error("Add tracks failed with status: 409 Conflict");
         assert_eq!(kind, ProviderErrorKind::Conflict);
         assert!(is_retryable(kind));
+    }
+
+    #[test]
+    fn read_http_for_attributes_provider_action_and_wait() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(reqwest::header::RETRY_AFTER, "59".parse().unwrap());
+        let error =
+            ProviderError::read_http_for("Spotify", "reading playlist revision", 429, &headers);
+        assert_eq!(error.kind, ProviderErrorKind::RateLimited);
+        assert_eq!(error.retry_after_ms, Some(59_000));
+        assert_eq!(
+            error.detail,
+            "Spotify RateLimited (HTTP 429) while reading playlist revision; wait 59s before retrying"
+        );
     }
 }

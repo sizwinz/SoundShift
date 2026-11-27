@@ -38,6 +38,7 @@ pub async fn open_auth_window(app: tauri::AppHandle, service: String) -> Result<
         .title(title)
         .inner_size(600.0, 720.0)
         .resizable(true)
+        .incognito(true)
         .build()
         .map_err(|e| format!("Failed to create auth webview window: {}", e))?;
 
@@ -47,8 +48,9 @@ pub async fn open_auth_window(app: tauri::AppHandle, service: String) -> Result<
     // Asynchronously poll for cookies off the main thread to prevent WebView2 deadlock
     tokio::spawn(async move {
         let poll_interval = Duration::from_millis(800);
-        let max_attempts = 375; // ~5 minutes max polling timeout
-        let mut attempts = 0;
+        let max_attempts: u32 = 375; // ~5 minutes max polling timeout
+        let mut attempts: u32 = 0;
+        let mut last_rejected_token: Option<(String, u32)> = None;
 
         while attempts < max_attempts {
             tokio::time::sleep(poll_interval).await;
@@ -77,19 +79,11 @@ pub async fn open_auth_window(app: tauri::AppHandle, service: String) -> Result<
                     }
                 }
 
-                // If service is ytmusic, also inspect www.youtube.com and accounts.google.com for Google session cookies
+                // Only collect YouTube Music / YouTube domain cookies (never .google.com mid-redirect cookies)
                 if service_id == "ytmusic" {
                     if let Ok(yt_url) = "https://www.youtube.com".parse::<Url>() {
                         if let Ok(yt_cookies) = w.cookies_for_url(yt_url) {
                             raw_cookies.extend(yt_cookies.into_iter().map(|c| RawCookie {
-                                name: c.name().to_string(),
-                                value: c.value().to_string(),
-                            }));
-                        }
-                    }
-                    if let Ok(google_url) = "https://accounts.google.com".parse::<Url>() {
-                        if let Ok(google_cookies) = w.cookies_for_url(google_url) {
-                            raw_cookies.extend(google_cookies.into_iter().map(|c| RawCookie {
                                 name: c.name().to_string(),
                                 value: c.value().to_string(),
                             }));
@@ -104,6 +98,36 @@ pub async fn open_auth_window(app: tauri::AppHandle, service: String) -> Result<
                 };
 
                 if let Some(token) = captured_token {
+                    if let Some((ref prev_token, prev_attempt)) = last_rejected_token {
+                        if prev_token == &token && attempts.saturating_sub(prev_attempt) < 4 {
+                            continue;
+                        }
+                    }
+
+                    // Verify live provider session before accepting and closing popup
+                    let session_verified = match service_id.as_str() {
+                        "ytmusic" => {
+                            use crate::providers::traits::MusicProvider;
+                            crate::providers::ytmusic::YouTubeMusicProvider::new(token.clone())
+                                .check_session()
+                                .await
+                                .is_ok()
+                        }
+                        "spotify" => {
+                            use crate::providers::traits::MusicProvider;
+                            crate::providers::spotify::SpotifyProvider::new(token.clone())
+                                .check_session()
+                                .await
+                                .is_ok()
+                        }
+                        _ => false,
+                    };
+
+                    if !session_verified {
+                        last_rejected_token = Some((token, attempts));
+                        continue;
+                    }
+
                     // Persist credential into OS Keyring with AES-256 fallback (AUTH-04, D-03)
                     let store_res = if let Some(state) = app_handle.try_state::<crate::AppState>() {
                         if let Ok(conn) = state.db.lock() {
@@ -139,11 +163,36 @@ pub async fn open_auth_window(app: tauri::AppHandle, service: String) -> Result<
 
                     // Auto-close popup window immediately per D-01/D-02
                     let _ = w.close();
-                    break;
+                    return;
                 }
             } else {
-                // Window no longer exists (user closed it)
-                break;
+                // Window closed manually before completion; clear loading spinner using persisted status
+                let fallback_status = if let Some(state) = app_handle.try_state::<crate::AppState>()
+                {
+                    if let Ok(conn) = state.db.lock() {
+                        if crate::auth::keyring_store::retrieve_credential(&service_id, &conn)
+                            .ok()
+                            .flatten()
+                            .is_some()
+                        {
+                            "connected"
+                        } else {
+                            "disconnected"
+                        }
+                    } else {
+                        "disconnected"
+                    }
+                } else {
+                    "disconnected"
+                };
+                let _ = app_handle.emit(
+                    "auth:status_changed",
+                    serde_json::json!({
+                        "service": service_id,
+                        "status": fallback_status
+                    }),
+                );
+                return;
             }
         }
     });

@@ -1,15 +1,19 @@
 import React from "react";
 import { MatchResult } from "../../types/diff";
 import { AudioPlayButton } from "./AudioPlayButton";
-import { ArrowRight, AlertCircle, CheckCircle2, XCircle, Copy } from "lucide-react";
+import { ArrowRight, AlertCircle, CheckCircle2, XCircle, Copy, Ban } from "lucide-react";
 import { Badge } from "../ui";
 
 interface DiffRowProps {
   result: MatchResult;
+  occurrenceKey: string;
   isSelected: boolean;
+  isSelectable: boolean;
   isDuplicate?: boolean;
-  onToggleSelect: (trackId: string) => void;
-  onOpenDrawer?: (result: MatchResult) => void;
+  sourceService?: string;
+  targetService?: string;
+  onToggleSelect: (occurrenceKey: string) => void;
+  onOpenDrawer?: (occurrenceKey: string, result: MatchResult) => void;
 }
 
 function formatDuration(ms: number): string {
@@ -25,28 +29,53 @@ function formatDelta(deltaMs: number): string {
   return deltaSec > 0 ? `+${deltaSec}s` : `${deltaSec}s`;
 }
 
+function formatMethodLabel(method?: string | null, confidence?: number): string | null {
+  if (!method) return null;
+  const pct = typeof confidence === "number" && confidence > 0 ? `${Math.round(confidence * 100)}%` : null;
+  if (method === "isrc" || method === "cache:isrc") return "ISRC";
+  if (method === "manual_disambiguation") return "Manual";
+  if (method === "batch_accepted") return pct ? `Auto ${pct}` : "Auto";
+  if (method.startsWith("cache:")) return pct ? `Cached ${pct}` : "Cached";
+  if (method.includes("fuzzy")) return pct ? `Fuzzy ${pct}` : "Fuzzy";
+  return pct;
+}
+
 export const DiffRow: React.FC<DiffRowProps> = ({
   result,
+  occurrenceKey,
   isSelected,
+  isSelectable,
   isDuplicate = false,
+  sourceService = "spotify",
+  targetService = "ytmusic",
   onToggleSelect,
   onOpenDrawer,
 }) => {
-  const { source_track, status, matched_track, candidates } = result;
+  const { source_track, status, matched_track, candidates, confidence, match_method } = result;
 
   const topCandidate = candidates[0];
   const deltaMs = topCandidate?.duration_delta_ms ?? 0;
+  const isUnplayable =
+    source_track.is_playable === false || matched_track?.is_playable === false;
+  const methodTag = formatMethodLabel(match_method, confidence);
 
   const renderStatusBadge = () => {
     switch (status) {
       case "Exact":
         return (
-          <Badge
-            variant="exact"
-            icon={<CheckCircle2 className="w-3 h-3 text-emerald-400" />}
-          >
-            Exact
-          </Badge>
+          <div className="flex flex-col items-center gap-0.5">
+            <Badge
+              variant="exact"
+              icon={<CheckCircle2 className="w-3 h-3 text-emerald-400" />}
+            >
+              Exact
+            </Badge>
+            {methodTag && (
+              <span className="text-[9px] font-mono text-zinc-500 uppercase tracking-wide">
+                {methodTag}
+              </span>
+            )}
+          </div>
         );
       case "Ambiguous":
         return (
@@ -54,7 +83,7 @@ export const DiffRow: React.FC<DiffRowProps> = ({
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              onOpenDrawer?.(result);
+              onOpenDrawer?.(occurrenceKey, result);
             }}
             className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-950/60 text-amber-400 border border-amber-500/30 hover:bg-amber-900/60 transition-colors cursor-pointer"
             title="Click to resolve ambiguity in drawer"
@@ -69,7 +98,7 @@ export const DiffRow: React.FC<DiffRowProps> = ({
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              onOpenDrawer?.(result);
+              onOpenDrawer?.(occurrenceKey, result);
             }}
             className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-rose-950/60 text-rose-400 border border-rose-500/30 hover:bg-rose-900/60 transition-colors cursor-pointer"
             title="Click to manually find match in drawer"
@@ -86,7 +115,11 @@ export const DiffRow: React.FC<DiffRowProps> = ({
   return (
     <div
       className={`h-[76px] flex items-center gap-2 px-3 sm:px-4 border-b border-white/[0.04] select-none transition-colors ${
-        isSelected ? "bg-[#111116]" : "hover:bg-[#0c0c10]"
+        isUnplayable
+          ? "opacity-60 bg-[#070709]"
+          : isSelected
+          ? "bg-[#111116]"
+          : "hover:bg-[#0c0c10]"
       }`}
     >
       {/* Checkbox */}
@@ -94,8 +127,19 @@ export const DiffRow: React.FC<DiffRowProps> = ({
         <input
           type="checkbox"
           checked={isSelected}
-          onChange={() => onToggleSelect(source_track.id)}
-          className="w-4 h-4 rounded border-white/[0.2] bg-zinc-900 text-emerald-500 focus:ring-0 focus:ring-offset-0 cursor-pointer accent-emerald-500"
+          disabled={!isSelectable}
+          onChange={() => onToggleSelect(occurrenceKey)}
+          aria-label={`Select ${source_track.title}`}
+          title={
+            !isSelectable
+              ? isUnplayable
+                ? "Unavailable track cannot be transferred"
+                : "Review and resolve match before selecting"
+              : isSelected
+              ? "Deselect track"
+              : "Select track"
+          }
+          className="w-4 h-4 rounded border-white/[0.2] bg-zinc-900 text-emerald-500 focus:ring-0 focus:ring-offset-0 cursor-pointer accent-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
         />
       </div>
 
@@ -116,7 +160,7 @@ export const DiffRow: React.FC<DiffRowProps> = ({
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
-            <span className="text-xs font-semibold text-zinc-200 truncate">
+            <span className="text-xs font-semibold text-zinc-200 truncate select-text">
               {source_track.title}
             </span>
             {source_track.is_explicit && (
@@ -130,8 +174,14 @@ export const DiffRow: React.FC<DiffRowProps> = ({
                 <span>Dup</span>
               </span>
             )}
+            {isUnplayable && (
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-rose-950/60 text-[10px] text-rose-300 border border-rose-500/30">
+                <Ban className="w-2.5 h-2.5" />
+                <span>Unavailable</span>
+              </span>
+            )}
           </div>
-          <div className="text-[10px] sm:text-[11px] text-zinc-500 truncate font-mono mt-0.5">
+          <div className="text-[10px] sm:text-[11px] text-zinc-500 truncate font-mono mt-0.5 select-text">
             <span className="font-sans text-zinc-400">{source_track.artists.join(", ")}</span>
             <span className="mx-1 text-zinc-600">•</span>
             <span className="tabular-nums">{formatDuration(source_track.duration_ms)}</span>
@@ -151,7 +201,7 @@ export const DiffRow: React.FC<DiffRowProps> = ({
           {matched_track ? (
             <>
               <div className="flex items-center justify-end gap-1.5">
-                <span className="text-xs font-semibold text-zinc-200 truncate">
+                <span className="text-xs font-semibold text-zinc-200 truncate select-text">
                   {matched_track.title}
                 </span>
                 {matched_track.is_explicit && (
@@ -160,7 +210,7 @@ export const DiffRow: React.FC<DiffRowProps> = ({
                   </span>
                 )}
               </div>
-              <div className="text-[11px] text-zinc-500 truncate font-mono mt-0.5">
+              <div className="text-[11px] text-zinc-500 truncate font-mono mt-0.5 select-text">
                 <span className="font-sans text-zinc-400">{matched_track.artists.join(", ")}</span>
                 <span className="mx-1 text-zinc-600">•</span>
                 <span className="tabular-nums">{formatDuration(matched_track.duration_ms)}</span>
@@ -186,7 +236,11 @@ export const DiffRow: React.FC<DiffRowProps> = ({
 
         {/* Audio Preview */}
         <div className="shrink-0">
-          <AudioPlayButton track={matched_track ?? source_track} size="sm" />
+          <AudioPlayButton
+            track={matched_track ?? source_track}
+            size="sm"
+            service={matched_track ? targetService : sourceService}
+          />
         </div>
       </div>
     </div>

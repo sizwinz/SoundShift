@@ -20,6 +20,7 @@ interface FilterToolbarProps {
   counts: FilterCounts;
   isAllFilteredSelected: boolean;
   onToggleSelectAllFiltered: () => void;
+  searchInputRef?: React.Ref<HTMLInputElement>;
 }
 
 export const FilterToolbar: React.FC<FilterToolbarProps> = ({
@@ -30,6 +31,7 @@ export const FilterToolbar: React.FC<FilterToolbarProps> = ({
   counts,
   isAllFilteredSelected,
   onToggleSelectAllFiltered,
+  searchInputRef,
 }) => {
   const tabs: { id: FilterTab; label: string; count: number; badgeVariant: BadgeVariant }[] = [
     { id: "all", label: "All Tracks", count: counts.all, badgeVariant: "neutral" },
@@ -81,6 +83,7 @@ export const FilterToolbar: React.FC<FilterToolbarProps> = ({
 
       {/* Search Input */}
       <SearchInput
+        inputRef={searchInputRef}
         value={searchQuery}
         onChange={(e) => onSearchChange(e.target.value)}
         onClear={() => onSearchChange("")}

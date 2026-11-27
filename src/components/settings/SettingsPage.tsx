@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   Check,
   Database,
@@ -10,27 +11,38 @@ import {
   Trash2,
 } from "lucide-react";
 import { Card, Button } from "../ui";
+import { isTauri } from "../../utils/tauri";
 
 const SETTINGS_KEY = "soundshift.settings";
 
 export interface SoundShiftSettings {
   concurrency: number;
+  matchingConcurrency: number;
   confirmBeforeTransfer: boolean;
   reducedMotion: boolean;
   keepTransferLogs: boolean;
+  minimizeToTray: boolean;
 }
 
 export const defaultSettings: SoundShiftSettings = {
   concurrency: 1,
+  matchingConcurrency: 4,
   confirmBeforeTransfer: true,
   reducedMotion: false,
   keepTransferLogs: true,
+  minimizeToTray: false,
 };
 
 export function readSoundShiftSettings(): SoundShiftSettings {
   try {
     const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}") as Partial<SoundShiftSettings>;
-    return { ...defaultSettings, ...stored };
+    const rawMatching = typeof stored.matchingConcurrency === "number" ? stored.matchingConcurrency : defaultSettings.matchingConcurrency;
+    return {
+      ...defaultSettings,
+      ...stored,
+      concurrency: 1,
+      matchingConcurrency: Math.min(4, Math.max(1, Math.round(rawMatching))),
+    };
   } catch {
     return defaultSettings;
   }
@@ -39,6 +51,7 @@ export function readSoundShiftSettings(): SoundShiftSettings {
 export function SettingsPage() {
   const [settings, setSettings] = useState<SoundShiftSettings>(() => readSoundShiftSettings());
   const [saved, setSaved] = useState(false);
+  const [cacheNotice, setCacheNotice] = useState<string | null>(null);
 
   useEffect(() => {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
@@ -50,17 +63,38 @@ export function SettingsPage() {
 
   const update = <K extends keyof SoundShiftSettings>(key: K, value: SoundShiftSettings[K]) => {
     setSettings((current) => ({ ...current, [key]: value }));
+    if (key === "minimizeToTray" && isTauri()) {
+      void invoke("set_tray_preference", { enabled: Boolean(value) }).catch(() => {});
+    }
   };
 
   const reset = () => {
     setSettings(defaultSettings);
     localStorage.removeItem("soundshift.transfer-options");
+    if (isTauri()) {
+      void invoke("set_tray_preference", { enabled: false }).catch(() => {});
+    }
   };
 
   const clearLocalData = () => {
     localStorage.removeItem(SETTINGS_KEY);
     localStorage.removeItem("soundshift.transfer-options");
+    sessionStorage.removeItem("soundshift.staged-session");
     setSettings(defaultSettings);
+    setCacheNotice("Cleared local UI and target playlist preferences.");
+  };
+
+  const clearMatchCache = async () => {
+    if (!isTauri()) {
+      setCacheNotice("Track match cache resets inside the desktop app.");
+      return;
+    }
+    try {
+      const removed = await invoke<number>("clear_match_cache");
+      setCacheNotice(`Cleared ${removed} cached track match entries.`);
+    } catch (err) {
+      setCacheNotice(`Failed to clear match cache: ${err instanceof Error ? err.message : String(err)}`);
+    }
   };
 
   return (
@@ -93,15 +127,15 @@ export function SettingsPage() {
                 <Gauge className="h-4 w-4" />
               </div>
               <div>
-                <h2 className="text-sm font-semibold text-zinc-100">Transfer Performance</h2>
-                <p className="mt-0.5 text-xs text-zinc-400">Destination writes run in order; matching can run concurrently.</p>
+                <h2 className="text-sm font-semibold text-zinc-100">Transfer & Matching Performance</h2>
+                <p className="mt-0.5 text-xs text-zinc-400">Destination writes run sequentially; catalog matching runs concurrently.</p>
               </div>
             </div>
 
             <div className="space-y-5 px-5 py-5">
-              <label className="block">
+              <div>
                 <div className="flex items-center justify-between text-xs">
-                  <span className="font-medium text-zinc-200">Concurrent Workers</span>
+                  <span className="font-medium text-zinc-200">Concurrent Writers</span>
                   <span className="rounded-md bg-white/[0.06] border border-white/[0.08] px-2.5 py-0.5 font-mono text-emerald-400 tabular-nums">
                     1 writer
                   </span>
@@ -113,17 +147,43 @@ export function SettingsPage() {
                   value={1}
                   disabled
                   readOnly
-                  className="mt-3 h-1.5 w-full cursor-pointer accent-emerald-500"
+                  className="mt-3 h-1.5 w-full cursor-not-allowed accent-emerald-500 opacity-60"
                   aria-label="Concurrent workers"
                 />
-                <div className="mt-2 flex justify-between text-[11px] font-mono text-zinc-500">
-                  <span>One ordered playlist writer</span>
+                <div className="mt-1.5 flex justify-between text-[11px] font-mono text-zinc-500">
+                  <span>One ordered playlist writer enforced for safety</span>
                 </div>
-              </label>
+              </div>
+
+              <div className="border-t border-white/[0.06] pt-4">
+                <div className="flex items-center justify-between text-xs">
+                  <label htmlFor="matching-concurrency-range" className="font-medium text-zinc-200">
+                    Matching Search Workers
+                  </label>
+                  <span className="rounded-md bg-white/[0.06] border border-white/[0.08] px-2.5 py-0.5 font-mono text-emerald-400 tabular-nums">
+                    {settings.matchingConcurrency} {settings.matchingConcurrency === 1 ? "worker" : "workers"}
+                  </span>
+                </div>
+                <input
+                  id="matching-concurrency-range"
+                  type="range"
+                  min={1}
+                  max={4}
+                  step={1}
+                  value={settings.matchingConcurrency}
+                  onChange={(e) => update("matchingConcurrency", Number(e.target.value))}
+                  className="mt-3 h-1.5 w-full cursor-pointer accent-emerald-500"
+                  aria-label="Matching search workers"
+                />
+                <div className="mt-1.5 flex justify-between text-[11px] font-mono text-zinc-500">
+                  <span>1 (gentle on rate limits)</span>
+                  <span>4 (fastest matching)</span>
+                </div>
+              </div>
 
               <SettingToggle
                 title="Pre-transfer confirmation modal"
-                description="Show the target playlist destination selector and batch review screen before dispatching tasks."
+                description="Show the target playlist destination selector and batch review modal before dispatching transfers."
                 checked={settings.confirmBeforeTransfer}
                 onChange={(checked) => update("confirmBeforeTransfer", checked)}
               />
@@ -144,8 +204,8 @@ export function SettingsPage() {
                 <Sparkles className="h-4 w-4" />
               </div>
               <div>
-                <h2 className="text-sm font-semibold text-zinc-100">User Interface & Motion</h2>
-                <p className="mt-0.5 text-xs text-zinc-400">Accessibility and desktop animation preferences.</p>
+                <h2 className="text-sm font-semibold text-zinc-100">Desktop Shell & Motion</h2>
+                <p className="mt-0.5 text-xs text-zinc-400">Accessibility, window close, and desktop animation preferences.</p>
               </div>
             </div>
 
@@ -155,6 +215,13 @@ export function SettingsPage() {
                 description="Disable sliding drawer transitions and pulse animations for high performance or motion sensitivity."
                 checked={settings.reducedMotion}
                 onChange={(checked) => update("reducedMotion", checked)}
+              />
+
+              <SettingToggle
+                title="Minimize to system tray on close"
+                description="Keep SoundShift in the system tray when closing the window so hourly playlist sync checks continue running."
+                checked={settings.minimizeToTray}
+                onChange={(checked) => update("minimizeToTray", checked)}
               />
             </div>
           </Card>
@@ -167,20 +234,22 @@ export function SettingsPage() {
               </div>
               <div>
                 <h2 className="text-sm font-semibold text-zinc-100">Storage & Reset</h2>
-                <p className="mt-0.5 text-xs text-zinc-400">Manage client cache and reset local preferences.</p>
+                <p className="mt-0.5 text-xs text-zinc-400">Manage cached matches and reset local preferences.</p>
               </div>
             </div>
+
+            {cacheNotice && (
+              <div className="mx-5 mt-4 rounded-lg border border-emerald-500/30 bg-emerald-950/30 px-3 py-2 text-xs text-emerald-300">
+                {cacheNotice}
+              </div>
+            )}
 
             <div className="flex flex-col gap-3 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <div className="text-xs font-semibold text-zinc-200">Reset default preferences</div>
                 <p className="mt-0.5 text-xs text-zinc-400">Restore interface options to initial defaults.</p>
               </div>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={reset}
-              >
+              <Button variant="secondary" size="sm" onClick={reset}>
                 <RotateCcw className="h-3.5 w-3.5" />
                 <span>Reset Defaults</span>
               </Button>
@@ -188,16 +257,23 @@ export function SettingsPage() {
 
             <div className="border-t border-white/[0.06] px-5 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <div className="text-xs font-semibold text-rose-300">Clear cached transfer preferences</div>
-                <p className="mt-0.5 text-xs text-zinc-400">Clears locally memorized playlist targets without modifying OS credentials or snapshots.</p>
+                <div className="text-xs font-semibold text-zinc-200">Clear track match cache</div>
+                <p className="mt-0.5 text-xs text-zinc-400">Removes saved ISRC, fuzzy, and manual match overrides so future runs re-search fresh targets.</p>
               </div>
-              <Button
-                variant="danger"
-                size="sm"
-                onClick={clearLocalData}
-              >
+              <Button variant="secondary" size="sm" onClick={clearMatchCache}>
                 <Trash2 className="h-3.5 w-3.5" />
-                <span>Clear Cache</span>
+                <span>Clear Match Cache</span>
+              </Button>
+            </div>
+
+            <div className="border-t border-white/[0.06] px-5 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-xs font-semibold text-rose-300">Clear cached UI preferences</div>
+                <p className="mt-0.5 text-xs text-zinc-400">Clears locally memorized targets and draft staging state without modifying OS credentials or snapshots.</p>
+              </div>
+              <Button variant="danger" size="sm" onClick={clearLocalData}>
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>Clear UI Cache</span>
               </Button>
             </div>
           </Card>
@@ -234,7 +310,7 @@ export function SettingsPage() {
               </div>
               <div className="flex justify-between">
                 <span className="text-zinc-500 font-sans">Version:</span>
-                <span>0.9.1</span>
+                <span>0.10.0</span>
               </div>
             </div>
           </Card>
@@ -255,27 +331,39 @@ function SettingToggle({
   checked: boolean;
   onChange: (checked: boolean) => void;
 }) {
+  const switchId = useId();
+  const descId = useId();
+
   return (
-    <label className="flex items-start justify-between gap-4 cursor-pointer py-1">
+    <div className="flex items-start justify-between gap-4 py-1">
       <div className="min-w-0 flex-1">
-        <div className="text-xs font-semibold text-zinc-200">{title}</div>
-        <div className="mt-0.5 text-xs text-zinc-400 leading-relaxed">{description}</div>
+        <label
+          htmlFor={switchId}
+          className="text-xs font-semibold text-zinc-200 cursor-pointer block"
+        >
+          {title}
+        </label>
+        <p id={descId} className="mt-0.5 text-xs text-zinc-400 leading-relaxed">
+          {description}
+        </p>
       </div>
       <button
+        id={switchId}
         type="button"
         role="switch"
         aria-checked={checked}
+        aria-describedby={descId}
         onClick={() => onChange(!checked)}
-        className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none cursor-pointer mt-0.5 ${
+        className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400 cursor-pointer mt-0.5 ${
           checked ? "bg-emerald-500" : "bg-white/[0.12]"
         }`}
       >
         <span
-          className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+          className={`pointer-events-none inline-block h-4 w-4 transform rounded-full shadow-lg ring-0 transition duration-200 ease-in-out ${
             checked ? "translate-x-4 bg-zinc-950" : "translate-x-0 bg-zinc-300"
           }`}
         />
       </button>
-    </label>
+    </div>
   );
 }

@@ -8,6 +8,7 @@ import { Button } from "../ui";
 interface CandidateCardProps {
   candidate: MatchCandidate;
   rank: number;
+  targetService?: string;
   isSelected?: boolean;
   onSelect: (track: SourceTrack) => void;
   audioSlot?: React.ReactNode;
@@ -29,6 +30,7 @@ function formatDelta(deltaMs: number): string {
 export const CandidateCard: React.FC<CandidateCardProps> = ({
   candidate,
   rank,
+  targetService = "ytmusic",
   isSelected = false,
   onSelect,
   audioSlot,
@@ -109,7 +111,7 @@ export const CandidateCard: React.FC<CandidateCardProps> = ({
 
         {/* Audio Slot or AudioPlayButton */}
         <div className="shrink-0">
-          {audioSlot ?? <AudioPlayButton track={track} size="sm" />}
+          {audioSlot ?? <AudioPlayButton track={track} size="sm" service={targetService} />}
         </div>
 
         {/* Select Candidate Button */}

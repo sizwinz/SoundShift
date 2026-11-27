@@ -11,6 +11,7 @@ import {
   Activity,
 } from "lucide-react";
 import { useTransfer } from "../../context/TransferContext";
+import { Modal, Button } from "../ui";
 
 interface TelemetryDrawerProps {
   onNavigateToHistory?: () => void;
@@ -354,35 +355,29 @@ export const TelemetryDrawer: React.FC<TelemetryDrawerProps> = ({
       )}
 
       {/* Confirmation Modal for Cancel */}
-      {showCancelPrompt && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#0c0c11] border border-white/[0.1] rounded-xl p-5 max-w-sm w-full shadow-2xl">
-            <div className="flex items-center gap-2 text-amber-400 mb-2">
-              <AlertTriangle className="w-5 h-5 shrink-0" />
-              <h3 className="text-sm font-semibold text-zinc-100">Stop Migration?</h3>
-            </div>
-            <p className="text-xs text-zinc-400 mb-4 leading-relaxed">
-              In-flight requests will be safely drained and checkpoints preserved. You can resume or rollback later from History.
-            </p>
-            <div className="flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setShowCancelPrompt(false)}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-white/[0.06] hover:bg-white/[0.1] text-zinc-300 transition-colors cursor-pointer"
-              >
-                Continue Transfer
-              </button>
-              <button
-                type="button"
-                onClick={confirmCancel}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-rose-500 hover:bg-rose-400 text-zinc-950 font-semibold transition-colors cursor-pointer"
-              >
-                Stop Transfer
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Modal
+        isOpen={showCancelPrompt}
+        onClose={() => setShowCancelPrompt(false)}
+        title="Stop Migration?"
+        description="In-flight requests will be safely drained and checkpoints preserved."
+        maxWidth="max-w-sm"
+        accent="danger"
+        icon={<AlertTriangle className="w-5 h-5 text-amber-400" />}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setShowCancelPrompt(false)}>
+              Continue Transfer
+            </Button>
+            <Button variant="danger" onClick={confirmCancel}>
+              Stop Transfer
+            </Button>
+          </>
+        }
+      >
+        <p className="text-xs text-zinc-400 leading-relaxed">
+          You can inspect partial outcomes, reconcile uncertain writes, resume remaining tracks, or trigger 1-click rollback later from History.
+        </p>
+      </Modal>
     </aside>
   );
 };

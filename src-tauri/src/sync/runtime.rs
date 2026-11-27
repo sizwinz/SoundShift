@@ -2,6 +2,22 @@ use crate::AppState;
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Manager};
 
+#[tauri::command]
+pub fn set_tray_preference(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    state.minimize_to_tray.store(enabled, Ordering::SeqCst);
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT OR REPLACE INTO app_preferences (key, value, updated_at) VALUES ('minimize_to_tray', ?1, ?2)",
+        rusqlite::params![
+            if enabled { "true" } else { "false" },
+            chrono::Utc::now().timestamp()
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 pub fn acquire_gate(
     gate: std::sync::Arc<tokio::sync::Mutex<()>>,
     closing: &std::sync::atomic::AtomicBool,

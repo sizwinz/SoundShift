@@ -919,7 +919,6 @@ fn exhausted_retry_budget_survives_job_restart() {
             .can_resume
     );
 }
-
 #[test]
 fn retry_guidance_defers_resume_across_restart() {
     let (db, _) = fixture();
@@ -949,7 +948,6 @@ fn retry_guidance_defers_resume_across_restart() {
             .can_resume
     );
 }
-
 #[tokio::test]
 async fn cancellation_during_preflight_prevents_outbound_mutation() {
     let (db, control) = fixture();
@@ -1154,4 +1152,194 @@ fn legacy_confirmation_cannot_authorize_a_new_automatic_resume() {
             .unwrap()
             .can_resume
     );
+}
+
+#[tokio::test]
+async fn chunk_revision_fast_check_skips_full_reads_and_blocks_drift() {
+    use crate::providers::contracts::*;
+    struct RevProvider {
+        full_reads: AtomicUsize,
+        rev_checks: AtomicUsize,
+        live_rev: Mutex<String>,
+        tracks: Mutex<Vec<String>>,
+    }
+    #[async_trait]
+    impl MusicProvider for RevProvider {
+        async fn list_playlists(&self) -> Result<Vec<Playlist>, String> {
+            Ok(vec![])
+        }
+        async fn get_playlist_tracks(
+            &self,
+            _: &str,
+            _: Option<tokio::sync::mpsc::Sender<Vec<SourceTrack>>>,
+        ) -> Result<Vec<SourceTrack>, String> {
+            self.full_reads.fetch_add(1, Ordering::SeqCst);
+            Ok(self
+                .tracks
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|id| SourceTrack {
+                    id: id.clone(),
+                    ..SourceTrack::unavailable(0)
+                })
+                .collect())
+        }
+        async fn search_track(&self, _: &str) -> Result<Vec<SourceTrack>, String> {
+            Ok(vec![])
+        }
+        async fn create_playlist(&self, _: &str, _: Option<&str>) -> Result<String, String> {
+            Ok("pl".into())
+        }
+        async fn add_tracks_to_playlist(&self, _: &str, _: &[String]) -> Result<(), String> {
+            Ok(())
+        }
+        async fn remove_tracks_from_playlist(&self, _: &str, _: &[String]) -> Result<(), String> {
+            Ok(())
+        }
+        async fn delete_playlist(&self, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+        async fn playlist_revision(
+            &self,
+            _: &str,
+        ) -> Result<Option<String>, crate::providers::error::ProviderError> {
+            self.rev_checks.fetch_add(1, Ordering::SeqCst);
+            Ok(Some(self.live_rev.lock().unwrap().clone()))
+        }
+        async fn add_occurrences(
+            &self,
+            _: &str,
+            ids: &[String],
+        ) -> Result<MutationOutcome, crate::providers::error::ProviderError> {
+            self.tracks.lock().unwrap().extend(ids.iter().cloned());
+            let mut rev = self.live_rev.lock().unwrap();
+            *rev = format!("{}_next", *rev);
+            Ok(MutationOutcome {
+                occurrences: ids
+                    .iter()
+                    .enumerate()
+                    .map(|(index, id)| OccurrenceOutcome {
+                        index,
+                        track_id: id.clone(),
+                        status: OccurrenceStatus::Accepted,
+                        remote_id: None,
+                    })
+                    .collect(),
+                revision: Some(rev.clone()),
+            })
+        }
+    }
+
+    let (db, control) = fixture();
+    let provider = RevProvider {
+        full_reads: AtomicUsize::new(0),
+        rev_checks: AtomicUsize::new(0),
+        live_rev: Mutex::new("rev0".into()),
+        tracks: Mutex::new(vec![]),
+    };
+    assert!(journaled_add_with_options(
+        &db,
+        &provider,
+        "worker_job",
+        "target",
+        0,
+        &["t1".into()],
+        &AtomicU32::new(0),
+        &control,
+        true
+    )
+    .await
+    .unwrap());
+    let reads_after_first = provider.full_reads.load(Ordering::SeqCst);
+    assert!(reads_after_first >= 2);
+
+    assert!(journaled_add_with_options(
+        &db,
+        &provider,
+        "worker_job",
+        "target",
+        1,
+        &["t2".into()],
+        &AtomicU32::new(0),
+        &control,
+        true
+    )
+    .await
+    .unwrap());
+    assert_eq!(
+        provider.full_reads.load(Ordering::SeqCst),
+        reads_after_first,
+        "subsequent chunk should verify lightweight revision without repeating full reads"
+    );
+    assert!(provider.rev_checks.load(Ordering::SeqCst) > 0);
+
+    *provider.live_rev.lock().unwrap() = "external_drift".into();
+    let drift_err = journaled_add_with_options(
+        &db,
+        &provider,
+        "worker_job",
+        "target",
+        2,
+        &["t3".into()],
+        &AtomicU32::new(0),
+        &control,
+        true,
+    )
+    .await
+    .unwrap_err();
+    assert!(drift_err.contains("revision changed"));
+}
+
+#[tokio::test]
+async fn create_playlist_rejection_surfaces_sanitized_reason_and_records_failed_outcome() {
+    let conn = Connection::open_in_memory().unwrap();
+    crate::storage::schema::create_tables(&conn).unwrap();
+    let db = Arc::new(Mutex::new(conn));
+    let control = TransferControl::new("create_fail_job".into(), db.clone(), |_| {});
+    let provider = FakeProvider::new(
+        false,
+        Err("Playlist creation failed with status: 400 Bad Request".into()),
+    );
+    let track: SourceTrack = serde_json::from_value(serde_json::json!({
+        "id": "yt-1",
+        "title": "Song",
+        "artists": ["Artist"],
+        "duration_ms": 180000,
+        "is_explicit": false,
+        "is_playable": true
+    }))
+    .unwrap();
+    let config = BatchTransferConfig {
+        job_id: "create_fail_job".into(),
+        source_service: "spotify".into(),
+        target_service: "ytmusic".into(),
+        source_playlist_name: "Ummm....".into(),
+        target_playlist_id: None,
+        target_playlist_name: Some("Ummm....".into()),
+        is_new_playlist: true,
+        tracks: vec![track],
+        concurrency: 1,
+        skip_duplicates: true,
+    };
+
+    let err = prepare_transfer(&db, &provider, &config, &control)
+        .await
+        .unwrap_err();
+    assert!(
+        err.contains("400"),
+        "expected sanitized 400 reason in error, got: {err}"
+    );
+
+    let conn = db.lock().unwrap();
+    let (status, certainty, provider_response): (String, String, Option<String>) = conn
+        .query_row(
+            "SELECT status, certainty, provider_response FROM transfer_operations WHERE job_id = ?1 AND operation_type = 'create_playlist'",
+            ["create_fail_job"],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(status, "failed");
+    assert_eq!(certainty, "failed");
+    assert!(provider_response.unwrap_or_default().contains("400"));
 }

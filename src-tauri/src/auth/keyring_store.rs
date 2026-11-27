@@ -438,7 +438,9 @@ pub async fn check_auth(
                 "ytmusic" => {
                     !token.trim().is_empty()
                         && token.contains('=')
-                        && (token.contains("SAPISID") || token.contains("__Secure-3PAPISID"))
+                        && (token.contains("SAPISID")
+                            || token.contains("__Secure-3PAPISID")
+                            || token.contains("__Secure-1PAPISID"))
                 }
                 "spotify" => !token.trim().is_empty(),
                 _ => false,
@@ -463,9 +465,21 @@ pub async fn check_auth(
 #[tauri::command]
 pub async fn disconnect_account(app: tauri::AppHandle, service: String) -> Result<(), String> {
     let state = app.state::<crate::AppState>();
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        purge_credential(&service, &conn)?;
+    }
 
-    purge_credential(&service, &conn)?;
+    match service.as_str() {
+        "spotify" => state.spotify_cache.clear().await,
+        "ytmusic" => state.ytmusic_cache.clear(),
+        _ => {}
+    }
+
+    if let Some(auth_window) = app.get_webview_window(&format!("auth-{}", service)) {
+        let _ = auth_window.clear_all_browsing_data();
+        let _ = auth_window.close();
+    }
 
     let payload = serde_json::json!({
         "service": service,

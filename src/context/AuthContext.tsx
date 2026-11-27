@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { isTauri } from '../utils/tauri';
@@ -40,6 +40,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     spotify: false,
   });
 
+  const lastLiveCheckRef = useRef<Record<ServiceId, number>>({
+    ytmusic: 0,
+    spotify: 0,
+  });
+
+  const verifyLiveConnection = useCallback(async (service: ServiceId) => {
+    if (!isTauri()) return;
+    lastLiveCheckRef.current[service] = Date.now();
+    try {
+      await invoke('check_provider_connection', { service });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/authentication|unauthorized|\b401\b|\b403\b|expired|session.*invalid/i.test(msg)) {
+        setAccounts((prev) =>
+          prev.map((acc) =>
+            acc.id === service && acc.status === 'connected'
+              ? { ...acc, status: 'expired', lastChecked: Date.now() }
+              : acc
+          )
+        );
+      }
+    }
+  }, []);
+
   const checkStatus = useCallback(async (service?: ServiceId) => {
     if (!isTauri()) {
       return;
@@ -59,13 +83,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               : acc
           )
         );
+        if (result.status === 'connected') {
+          void verifyLiveConnection(s);
+        }
       } catch (err) {
         console.error(`Failed to check auth for ${s}:`, err);
       } finally {
         setLoading((prev) => ({ ...prev, [s]: false }));
       }
     }
-  }, []);
+  }, [verifyLiveConnection]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    const handleFocus = () => {
+      const now = Date.now();
+      for (const acc of accounts) {
+        if (acc.status === 'connected' && now - lastLiveCheckRef.current[acc.id] > 60_000) {
+          void verifyLiveConnection(acc.id);
+        }
+      }
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [accounts, verifyLiveConnection]);
 
   const connect = useCallback(async (service: ServiceId) => {
     if (!isTauri()) {

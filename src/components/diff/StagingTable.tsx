@@ -7,8 +7,33 @@ import { FilterToolbar, FilterTab, FilterCounts } from "./FilterToolbar";
 import { DisambiguationDrawer } from "./DisambiguationDrawer";
 import { StagingActionBar } from "./StagingActionBar";
 import { TransferConfirmModal, TransferTargetOptions } from "./TransferConfirmModal";
-import { Music, CheckCircle2, ArrowRight, ArrowLeft } from "lucide-react";
+import { readSoundShiftSettings } from "../settings/SettingsPage";
+import { useAudioPreview } from "../../context/AudioContext";
+import {
+  downloadTextFile,
+  exportMatchesToCsv,
+  exportMatchesToJson,
+  exportMatchesToM3u8,
+} from "../../utils/playlistFormats";
+import { Music, CheckCircle2, ArrowRight, ArrowLeft, Download } from "lucide-react";
 import { Badge } from "../ui";
+
+export function occurrenceKey(result: MatchResult, index: number): string {
+  return `${result.source_track.id}::${index}`;
+}
+
+export function isRowSelectable(result: MatchResult): boolean {
+  if (result.status !== "Exact" || !result.matched_track) return false;
+  if (result.source_track.is_playable === false) return false;
+  if (result.matched_track.is_playable === false) return false;
+  return true;
+}
+
+interface IndexedMatchResult {
+  key: string;
+  index: number;
+  result: MatchResult;
+}
 
 interface StagingTableProps {
   results: MatchResult[];
@@ -36,19 +61,136 @@ export const StagingTable: React.FC<StagingTableProps> = ({
   onBackToPlaylists,
 }) => {
   const parentRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const { activeTrackId } = useAudioPreview();
 
   const [activeTab, setActiveTab] = useState<FilterTab>("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [activeDrawerTrack, setActiveDrawerTrack] = useState<MatchResult | null>(null);
+  const [activeDrawerKey, setActiveDrawerKey] = useState<string | null>(null);
+  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
 
-  const handleOpenDrawer = (result: MatchResult) => {
-    setActiveDrawerTrack(result);
+  const playingTrackTitle = useMemo(() => {
+    if (!activeTrackId) return undefined;
+    const found = results.find(
+      (r) => r.source_track.id === activeTrackId || r.matched_track?.id === activeTrackId
+    );
+    return found?.matched_track?.id === activeTrackId
+      ? found.matched_track.title
+      : found?.source_track.title;
+  }, [activeTrackId, results]);
+
+  const indexedResults: IndexedMatchResult[] = useMemo(
+    () => results.map((result, index) => ({ key: occurrenceKey(result, index), index, result })),
+    [results]
+  );
+
+  const datasetSignature = useMemo(
+    () => `${playlistTitle ?? ""}|${indexedResults.map((item) => item.key).join(",")}`,
+    [playlistTitle, indexedResults]
+  );
+  const prevSignatureRef = useRef<string>(datasetSignature);
+
+  const [internalSelectedKeys, setInternalSelectedKeys] = useState<Set<string>>(() => {
+    const initial = new Set<string>();
+    indexedResults.forEach(({ key, result }) => {
+      if (isRowSelectable(result)) {
+        initial.add(key);
+      }
+    });
+    return initial;
+  });
+
+  useEffect(() => {
+    if (externalSelectedIds) return;
+    if (prevSignatureRef.current !== datasetSignature) {
+      prevSignatureRef.current = datasetSignature;
+      const initial = new Set<string>();
+      indexedResults.forEach(({ key, result }) => {
+        if (isRowSelectable(result)) {
+          initial.add(key);
+        }
+      });
+      setInternalSelectedKeys(initial);
+    }
+  }, [datasetSignature, indexedResults, externalSelectedIds]);
+
+  const effectiveSelectedKeys = useMemo(() => {
+    const active = new Set<string>();
+    indexedResults.forEach(({ key, result }) => {
+      if (!isRowSelectable(result)) return;
+      const chosen = externalSelectedIds
+        ? externalSelectedIds.has(key) || externalSelectedIds.has(result.source_track.id)
+        : internalSelectedKeys.has(key);
+      if (chosen) {
+        active.add(key);
+      }
+    });
+    return active;
+  }, [indexedResults, externalSelectedIds, internalSelectedKeys]);
+
+  const updateSelection = (next: Set<string>) => {
+    if (!externalSelectedIds) {
+      setInternalSelectedKeys(next);
+    }
+    onSelectionChange?.(next);
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  const duplicateKeySet = useMemo(() => {
+    const seenSource = new Set<string>();
+    const seenTargetIds = new Set<string>();
+    const duplicates = new Set<string>();
+
+    indexedResults.forEach(({ key, result }) => {
+      const dedupeSignature = result.source_track.isrc
+        ? `isrc:${result.source_track.isrc.trim().toUpperCase()}`
+        : `title:${result.source_track.title.toLowerCase().trim()}::${(result.source_track.artists[0] || "").toLowerCase().trim()}`;
+      const targetId = isRowSelectable(result) ? result.matched_track?.id : undefined;
+
+      const isSourceDup = seenSource.has(dedupeSignature);
+      const isTargetDup = Boolean(targetId && seenTargetIds.has(targetId));
+
+      if (isSourceDup || isTargetDup) {
+        duplicates.add(key);
+      }
+      seenSource.add(dedupeSignature);
+      if (targetId) {
+        seenTargetIds.add(targetId);
+      }
+    });
+
+    return duplicates;
+  }, [indexedResults]);
+
+  const handleOpenDrawer = (occKey: string, result: MatchResult) => {
+    setActiveDrawerKey(occKey);
     onOpenDrawer?.(result);
   };
 
-  const handleResolveCandidate = (sourceTrackId: string, resolvedTrack: SourceTrack) => {
-    const updatedResults = results.map((r) => {
-      if (r.source_track.id === sourceTrackId) {
+  const handleResolveCandidate = (
+    occKey: string | null,
+    sourceTrackId: string,
+    resolvedTrack: SourceTrack,
+    advance: boolean
+  ) => {
+    const targetIdx = indexedResults.findIndex((item) =>
+      occKey ? item.key === occKey : item.result.source_track.id === sourceTrackId
+    );
+    if (targetIdx === -1) return;
+
+    const updatedResults = results.map((r, idx) => {
+      if (idx === targetIdx) {
         return {
           ...r,
           status: "Exact" as const,
@@ -60,41 +202,29 @@ export const StagingTable: React.FC<StagingTableProps> = ({
       return r;
     });
 
-    const nextSelection = new Set(selectedTrackIds);
-    nextSelection.add(sourceTrackId);
+    const resolvedItem = indexedResults[targetIdx];
+    const nextSelection = new Set(effectiveSelectedKeys);
+    if (isRowSelectable(updatedResults[targetIdx])) {
+      nextSelection.add(resolvedItem.key);
+    }
     updateSelection(nextSelection);
+    onUpdateResults?.(updatedResults);
 
-    if (onUpdateResults) {
-      onUpdateResults(updatedResults);
-    }
-    setActiveDrawerTrack(null);
-  };
-
-  const [internalSelectedIds, setInternalSelectedIds] = useState<Set<string>>(() => {
-    const initial = new Set<string>();
-    results.forEach((r) => {
-      if (r.status === "Exact") {
-        initial.add(r.source_track.id);
-      }
-    });
-    return initial;
-  });
-
-  const selectedTrackIds = externalSelectedIds ?? internalSelectedIds;
-
-  const updateSelection = (newSet: Set<string>) => {
-    if (onSelectionChange) {
-      onSelectionChange(newSet);
+    if (advance) {
+      const nextUnresolved = indexedResults.find(
+        (_item, idx) => idx > targetIdx && updatedResults[idx].status !== "Exact"
+      ) ?? indexedResults.find(
+        (_item, idx) => idx < targetIdx && updatedResults[idx].status !== "Exact"
+      );
+      setActiveDrawerKey(nextUnresolved ? nextUnresolved.key : null);
     } else {
-      setInternalSelectedIds(newSet);
+      setActiveDrawerKey(null);
     }
   };
-
-  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
 
   const handleAcceptAllAmbiguous = () => {
-    const nextSelection = new Set(selectedTrackIds);
-    const updated = results.map((r) => {
+    const nextSelection = new Set(effectiveSelectedKeys);
+    const updated = results.map((r, idx) => {
       if (
         r.status === "Ambiguous" &&
         r.candidates.length > 0 &&
@@ -102,72 +232,42 @@ export const StagingTable: React.FC<StagingTableProps> = ({
         r.candidates[0].duration_delta_ms <= 4_000
       ) {
         const top = r.candidates[0];
-        nextSelection.add(r.source_track.id);
-        return {
+        const nextRow: MatchResult = {
           ...r,
           status: "Exact" as const,
           matched_track: top.track,
           confidence: top.similarity,
           match_method: "batch_accepted",
         };
+        if (isRowSelectable(nextRow)) {
+          nextSelection.add(occurrenceKey(r, idx));
+        }
+        return nextRow;
       }
       return r;
     });
 
     updateSelection(nextSelection);
-    if (onUpdateResults) {
-      onUpdateResults(updated);
-    }
+    onUpdateResults?.(updated);
   };
 
   const handleSkipUnresolved = () => {
     const nextSelection = new Set<string>();
-    results.forEach((r) => {
-      if (r.status === "Exact" && selectedTrackIds.has(r.source_track.id)) {
-        nextSelection.add(r.source_track.id);
+    indexedResults.forEach(({ key, result }) => {
+      if (isRowSelectable(result) && effectiveSelectedKeys.has(key)) {
+        nextSelection.add(key);
       }
     });
     updateSelection(nextSelection);
   };
 
   const handleDeduplicate = () => {
-    const nextSelection = new Set(selectedTrackIds);
-    duplicateIdSet.forEach((id) => {
-      nextSelection.delete(id);
+    const nextSelection = new Set(effectiveSelectedKeys);
+    duplicateKeySet.forEach((key) => {
+      nextSelection.delete(key);
     });
     updateSelection(nextSelection);
   };
-
-  useEffect(() => {
-    if (!externalSelectedIds) {
-      const initial = new Set<string>();
-      results.forEach((r) => {
-        if (r.status === "Exact") {
-          initial.add(r.source_track.id);
-        }
-      });
-      setInternalSelectedIds(initial);
-    }
-  }, [results, externalSelectedIds]);
-
-  const duplicateIdSet = useMemo(() => {
-    const seen = new Set<string>();
-    const duplicates = new Set<string>();
-
-    results.forEach((r) => {
-      const key = r.source_track.isrc
-        ? `isrc:${r.source_track.isrc.trim().toUpperCase()}`
-        : `title:${r.source_track.title.toLowerCase().trim()}::${(r.source_track.artists[0] || "").toLowerCase().trim()}`;
-
-      if (seen.has(key)) {
-        duplicates.add(r.source_track.id);
-      } else {
-        seen.add(key);
-      }
-    });
-
-    return duplicates;
-  }, [results]);
 
   const counts: FilterCounts = useMemo(() => {
     let exact = 0;
@@ -175,41 +275,41 @@ export const StagingTable: React.FC<StagingTableProps> = ({
     let red = 0;
     let duplicates = 0;
 
-    results.forEach((r) => {
-      if (r.status === "Exact") exact++;
-      else if (r.status === "Ambiguous") amber++;
-      else if (r.status === "NotFound") red++;
+    indexedResults.forEach(({ key, result }) => {
+      if (result.status === "Exact") exact++;
+      else if (result.status === "Ambiguous") amber++;
+      else if (result.status === "NotFound") red++;
 
-      if (duplicateIdSet.has(r.source_track.id)) {
+      if (duplicateKeySet.has(key)) {
         duplicates++;
       }
     });
 
     return {
-      all: results.length,
+      all: indexedResults.length,
       exact,
       amber,
       red,
       duplicates,
     };
-  }, [results, duplicateIdSet]);
+  }, [indexedResults, duplicateKeySet]);
 
   const filteredResults = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
 
-    return results.filter((r) => {
-      if (activeTab === "exact" && r.status !== "Exact") return false;
-      if (activeTab === "amber" && r.status !== "Ambiguous") return false;
-      if (activeTab === "red" && r.status !== "NotFound") return false;
-      if (activeTab === "duplicates" && !duplicateIdSet.has(r.source_track.id)) return false;
+    return indexedResults.filter(({ key, result }) => {
+      if (activeTab === "exact" && result.status !== "Exact") return false;
+      if (activeTab === "amber" && result.status !== "Ambiguous") return false;
+      if (activeTab === "red" && result.status !== "NotFound") return false;
+      if (activeTab === "duplicates" && !duplicateKeySet.has(key)) return false;
 
       if (query) {
-        const titleMatch = r.source_track.title.toLowerCase().includes(query);
-        const artistMatch = r.source_track.artists.some((a) =>
+        const titleMatch = result.source_track.title.toLowerCase().includes(query);
+        const artistMatch = result.source_track.artists.some((a) =>
           a.toLowerCase().includes(query)
         );
-        const destTitleMatch = r.matched_track?.title.toLowerCase().includes(query);
-        const destArtistMatch = r.matched_track?.artists.some((a) =>
+        const destTitleMatch = result.matched_track?.title.toLowerCase().includes(query);
+        const destArtistMatch = result.matched_track?.artists.some((a) =>
           a.toLowerCase().includes(query)
         );
         if (!titleMatch && !artistMatch && !destTitleMatch && !destArtistMatch) {
@@ -219,38 +319,92 @@ export const StagingTable: React.FC<StagingTableProps> = ({
 
       return true;
     });
-  }, [results, activeTab, searchQuery, duplicateIdSet]);
+  }, [indexedResults, activeTab, searchQuery, duplicateKeySet]);
 
   const rowVirtualizer = useVirtualizer({
     count: filteredResults.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 76,
     overscan: 10,
+    initialRect: { width: 1024, height: 640 },
   });
 
-  const handleToggleSelect = (trackId: string) => {
-    const next = new Set(selectedTrackIds);
-    if (next.has(trackId)) {
-      next.delete(trackId);
-    } else {
-      next.add(trackId);
+  const handleToggleSelect = (occKey: string) => {
+    const target = indexedResults.find((item) => item.key === occKey);
+    if (!target) return;
+    const next = new Set(effectiveSelectedKeys);
+    if (next.has(occKey)) {
+      next.delete(occKey);
+    } else if (isRowSelectable(target.result)) {
+      next.add(occKey);
     }
     updateSelection(next);
   };
 
+  const selectableFiltered = useMemo(
+    () => filteredResults.filter(({ result }) => isRowSelectable(result)),
+    [filteredResults]
+  );
+
   const isAllFilteredSelected = useMemo(() => {
-    if (filteredResults.length === 0) return false;
-    return filteredResults.every((r) => selectedTrackIds.has(r.source_track.id));
-  }, [filteredResults, selectedTrackIds]);
+    if (selectableFiltered.length === 0) return false;
+    return selectableFiltered.every(({ key }) => effectiveSelectedKeys.has(key));
+  }, [selectableFiltered, effectiveSelectedKeys]);
 
   const handleToggleSelectAllFiltered = () => {
-    const next = new Set(selectedTrackIds);
+    const next = new Set(effectiveSelectedKeys);
     if (isAllFilteredSelected) {
-      filteredResults.forEach((r) => next.delete(r.source_track.id));
+      selectableFiltered.forEach(({ key }) => next.delete(key));
     } else {
-      filteredResults.forEach((r) => next.add(r.source_track.id));
+      selectableFiltered.forEach(({ key }) => next.add(key));
     }
     updateSelection(next);
+  };
+
+  const unresolvedItems = useMemo(
+    () => indexedResults.filter((item) => item.result.status !== "Exact"),
+    [indexedResults]
+  );
+
+  const activeDrawerItem = useMemo(
+    () => (activeDrawerKey ? indexedResults.find((item) => item.key === activeDrawerKey) ?? null : null),
+    [indexedResults, activeDrawerKey]
+  );
+
+  const activeUnresolvedIdx = useMemo(() => {
+    if (!activeDrawerKey) return -1;
+    return unresolvedItems.findIndex((item) => item.key === activeDrawerKey);
+  }, [unresolvedItems, activeDrawerKey]);
+
+  const handleNavigateUnresolved = (delta: -1 | 1) => {
+    if (unresolvedItems.length === 0) return;
+    if (activeUnresolvedIdx === -1) {
+      setActiveDrawerKey(unresolvedItems[0].key);
+      return;
+    }
+    const nextIdx =
+      (activeUnresolvedIdx + delta + unresolvedItems.length) % unresolvedItems.length;
+    setActiveDrawerKey(unresolvedItems[nextIdx].key);
+  };
+
+  const getSelectedMatchResults = () =>
+    indexedResults
+      .filter(({ key, result }) => effectiveSelectedKeys.has(key) && isRowSelectable(result))
+      .map(({ result }) => result);
+
+  const handleStartTransferClick = () => {
+    const settings = readSoundShiftSettings();
+    if (!settings.confirmBeforeTransfer) {
+      onConfirmTransfer?.(getSelectedMatchResults(), {
+        playlistName: playlistTitle || "Playlist Transfer",
+        isNewPlaylist: true,
+        targetPlaylistId: null,
+        concurrency: 1,
+        skipDuplicates: true,
+      });
+      return;
+    }
+    setIsConfirmModalOpen(true);
   };
 
   return (
@@ -291,8 +445,65 @@ export const StagingTable: React.FC<StagingTableProps> = ({
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
+            <div className="hidden md:flex items-center gap-1 mr-1">
+              <button
+                type="button"
+                aria-label="Export JSON"
+                onClick={() =>
+                  downloadTextFile(
+                    `${(playlistTitle || "soundshift-staging").replace(/[^a-z0-9_-]+/gi, "_")}.json`,
+                    exportMatchesToJson(
+                      playlistTitle || "Playlist",
+                      sourceService || "spotify",
+                      targetService || "ytmusic",
+                      results,
+                    ),
+                    "application/json",
+                  )
+                }
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-mono text-zinc-400 hover:text-zinc-100 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] transition-colors cursor-pointer"
+                title="Export staged playlist & matches as JSON"
+              >
+                <Download className="w-3 h-3" />
+                <span>JSON</span>
+              </button>
+              <button
+                type="button"
+                aria-label="Export CSV"
+                onClick={() =>
+                  downloadTextFile(
+                    `${(playlistTitle || "soundshift-staging").replace(/[^a-z0-9_-]+/gi, "_")}.csv`,
+                    exportMatchesToCsv(results),
+                    "text/csv;charset=utf-8",
+                  )
+                }
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-mono text-zinc-400 hover:text-zinc-100 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] transition-colors cursor-pointer"
+                title="Export staged playlist & matches as CSV"
+              >
+                <span>CSV</span>
+              </button>
+              <button
+                type="button"
+                aria-label="Export M3U8"
+                onClick={() =>
+                  downloadTextFile(
+                    `${(playlistTitle || "soundshift-staging").replace(/[^a-z0-9_-]+/gi, "_")}.m3u8`,
+                    exportMatchesToM3u8(
+                      playlistTitle || "Playlist",
+                      targetService || "ytmusic",
+                      results,
+                    ),
+                    "application/x-mpegURL",
+                  )
+                }
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-mono text-zinc-400 hover:text-zinc-100 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] transition-colors cursor-pointer"
+                title="Export matched tracks as M3U8 playlist"
+              >
+                <span>M3U8</span>
+              </button>
+            </div>
             <Badge variant="connected" icon={<CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}>
-              <span>{selectedTrackIds.size} selected</span>
+              <span>{effectiveSelectedKeys.size} selected</span>
             </Badge>
           </div>
         </div>
@@ -309,6 +520,7 @@ export const StagingTable: React.FC<StagingTableProps> = ({
             counts={counts}
             isAllFilteredSelected={isAllFilteredSelected}
             onToggleSelectAllFiltered={handleToggleSelectAllFiltered}
+            searchInputRef={searchInputRef}
           />
         </div>
       </div>
@@ -424,13 +636,13 @@ export const StagingTable: React.FC<StagingTableProps> = ({
             }}
           >
             {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-              const result = filteredResults[virtualRow.index];
-              const isSelected = selectedTrackIds.has(result.source_track.id);
-              const isDuplicate = duplicateIdSet.has(result.source_track.id);
+              const { key, result } = filteredResults[virtualRow.index];
+              const isSelected = effectiveSelectedKeys.has(key);
+              const isDuplicate = duplicateKeySet.has(key);
 
               return (
                 <div
-                  key={result.source_track.id}
+                  key={key}
                   style={{
                     position: "absolute",
                     top: 0,
@@ -443,8 +655,12 @@ export const StagingTable: React.FC<StagingTableProps> = ({
                   <div className="w-full max-w-[1440px] mx-auto px-4 sm:px-6 h-full">
                     <DiffRow
                       result={result}
+                      occurrenceKey={key}
                       isSelected={isSelected}
+                      isSelectable={isRowSelectable(result)}
                       isDuplicate={isDuplicate}
+                      sourceService={sourceService}
+                      targetService={targetService}
                       onToggleSelect={handleToggleSelect}
                       onOpenDrawer={handleOpenDrawer}
                     />
@@ -458,24 +674,34 @@ export const StagingTable: React.FC<StagingTableProps> = ({
 
       {/* Sticky Bottom Action Bar */}
       <StagingActionBar
-        selectedCount={selectedTrackIds.size}
+        selectedCount={effectiveSelectedKeys.size}
         totalCount={results.length}
         exactCount={counts.exact}
         amberCount={counts.amber}
         redCount={counts.red}
+        playingTrackTitle={playingTrackTitle}
         onAcceptAllAmbiguous={handleAcceptAllAmbiguous}
         onSkipUnresolved={handleSkipUnresolved}
         onDeduplicate={handleDeduplicate}
-        onStartTransfer={() => setIsConfirmModalOpen(true)}
+        onStartTransfer={handleStartTransferClick}
       />
 
       {/* Disambiguation Drawer */}
       <DisambiguationDrawer
-        matchResult={activeDrawerTrack}
+        matchResult={activeDrawerItem?.result ?? null}
+        sourceService={sourceService}
         targetService={targetService || "ytmusic"}
-        isOpen={Boolean(activeDrawerTrack)}
-        onClose={() => setActiveDrawerTrack(null)}
-        onResolve={handleResolveCandidate}
+        isOpen={Boolean(activeDrawerItem)}
+        onClose={() => setActiveDrawerKey(null)}
+        onResolve={(trackId, resolvedTrack) =>
+          handleResolveCandidate(activeDrawerItem?.key ?? null, trackId, resolvedTrack, false)
+        }
+        unresolvedPosition={activeUnresolvedIdx >= 0 ? activeUnresolvedIdx + 1 : undefined}
+        totalUnresolved={unresolvedItems.length}
+        onResolveAndNext={(trackId, resolvedTrack) =>
+          handleResolveCandidate(activeDrawerItem?.key ?? null, trackId, resolvedTrack, true)
+        }
+        onNavigateUnresolved={handleNavigateUnresolved}
       />
 
       {/* Pre-Transfer Confirmation Modal */}
@@ -484,13 +710,12 @@ export const StagingTable: React.FC<StagingTableProps> = ({
         onClose={() => setIsConfirmModalOpen(false)}
         onConfirm={(targetOptions) => {
           setIsConfirmModalOpen(false);
-          const selectedTracks = results.filter((r) => selectedTrackIds.has(r.source_track.id));
-          onConfirmTransfer?.(selectedTracks, targetOptions);
+          onConfirmTransfer?.(getSelectedMatchResults(), targetOptions);
         }}
         playlistTitle={playlistTitle}
         targetService={targetService || "ytmusic"}
         results={results}
-        selectedTrackIds={selectedTrackIds}
+        selectedTrackIds={effectiveSelectedKeys}
       />
     </div>
   );

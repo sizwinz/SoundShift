@@ -18,6 +18,9 @@ pub struct AppState {
     pub mutation_gate: Arc<tokio::sync::Mutex<()>>,
     pub shutting_down: Arc<AtomicBool>,
     pub exit_ready: Arc<AtomicBool>,
+    pub minimize_to_tray: Arc<AtomicBool>,
+    pub spotify_cache: crate::providers::spotify::SpotifySessionCache,
+    pub ytmusic_cache: crate::providers::ytmusic::YouTubeMusicSessionCache,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -42,6 +45,9 @@ pub fn run() {
             providers::commands::search_provider_tracks,
             providers::commands::resolve_track_by_url,
             engine::commands::execute_playlist_matching,
+            engine::commands::match_custom_tracks,
+            engine::commands::save_manual_match_override,
+            engine::commands::clear_match_cache,
             engine::commands::start_batch_transfer,
             engine::commands::pause_batch_transfer,
             engine::commands::resume_batch_transfer,
@@ -54,6 +60,8 @@ pub fn run() {
             engine::commands::resume_recorded_transfer,
             engine::commands::get_storage_recovery_notice,
             engine::commands::acknowledge_storage_recovery,
+            engine::commands::get_sanitized_diagnostic_report,
+            sync::runtime::set_tray_preference,
             sync::commands::list_sync_pairs,
             sync::commands::create_sync_pair,
             sync::commands::preview_sync_pair,
@@ -74,13 +82,88 @@ pub fn run() {
             let conn = storage::init_db(&app_dir).expect("failed to initialize sqlite database");
             sync::scheduler::recover_startup(&conn, chrono::Utc::now().timestamp())
                 .expect("failed to inspect interrupted sync runs");
+            let minimize_pref = {
+                use rusqlite::OptionalExtension;
+                conn.query_row(
+                    "SELECT value FROM app_preferences WHERE key = 'minimize_to_tray'",
+                    [],
+                    |r| r.get::<_, String>(0),
+                )
+                .optional()
+                .ok()
+                .flatten()
+                .is_some_and(|v| v == "true")
+            };
             app.manage(AppState {
                 db: Arc::new(Mutex::new(conn)),
                 active_transfers: Arc::new(Mutex::new(HashMap::new())),
                 mutation_gate: Arc::new(tokio::sync::Mutex::new(())),
                 shutting_down: Arc::new(AtomicBool::new(false)),
                 exit_ready: Arc::new(AtomicBool::new(false)),
+                minimize_to_tray: Arc::new(AtomicBool::new(minimize_pref)),
+                spotify_cache: crate::providers::spotify::SpotifySessionCache::default(),
+                ytmusic_cache: crate::providers::ytmusic::YouTubeMusicSessionCache::default(),
             });
+
+            #[cfg(desktop)]
+            {
+                let show_item = tauri::menu::MenuItem::with_id(
+                    app,
+                    "show",
+                    "Show SoundShift",
+                    true,
+                    None::<&str>,
+                )?;
+                let quit_item = tauri::menu::MenuItem::with_id(
+                    app,
+                    "quit",
+                    "Quit SoundShift",
+                    true,
+                    None::<&str>,
+                )?;
+                let tray_menu = tauri::menu::Menu::with_items(app, &[&show_item, &quit_item])?;
+                let mut tray_builder = tauri::tray::TrayIconBuilder::with_id("main-tray")
+                    .tooltip("SoundShift")
+                    .menu(&tray_menu)
+                    .show_menu_on_left_click(false)
+                    .on_menu_event(|app, event| match event.id.as_ref() {
+                        "show" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.unminimize();
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        "quit" => {
+                            sync::runtime::request_shutdown(app);
+                        }
+                        _ => {}
+                    })
+                    .on_tray_icon_event(|tray, event| {
+                        if let tauri::tray::TrayIconEvent::Click {
+                            button: tauri::tray::MouseButton::Left,
+                            button_state: tauri::tray::MouseButtonState::Up,
+                            ..
+                        } = event
+                        {
+                            let app = tray.app_handle();
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.unminimize();
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                    });
+                if let Ok(icon) =
+                    tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))
+                {
+                    tray_builder = tray_builder.icon(icon);
+                } else if let Some(icon) = app.default_window_icon().cloned() {
+                    tray_builder = tray_builder.icon(icon);
+                }
+                let _tray = tray_builder.build(app)?;
+            }
+
             let scheduler_app = app.handle().clone();
             tauri::async_runtime::spawn(sync::commands::scheduler_loop(scheduler_app));
 
@@ -106,7 +189,16 @@ pub fn run() {
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
-                    sync::runtime::request_shutdown(window.app_handle());
+                    let app = window.app_handle();
+                    if app
+                        .state::<AppState>()
+                        .minimize_to_tray
+                        .load(Ordering::SeqCst)
+                    {
+                        let _ = window.hide();
+                    } else {
+                        sync::runtime::request_shutdown(app);
+                    }
                 }
             }
         })

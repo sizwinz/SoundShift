@@ -30,8 +30,14 @@ fn providers(app: &AppHandle) -> Result<Providers, String> {
         tokens
     };
     Ok([
-        Arc::new(SpotifyProvider::new(tokens[0].clone())),
-        Arc::new(YouTubeMusicProvider::new(tokens[1].clone())),
+        Arc::new(SpotifyProvider::with_session_cache(
+            tokens[0].clone(),
+            state.spotify_cache.clone(),
+        )),
+        Arc::new(YouTubeMusicProvider::with_session_cache(
+            tokens[1].clone(),
+            state.ytmusic_cache.clone(),
+        )),
     ])
 }
 fn publish(app: &AppHandle, pair: &str, update: LifecycleUpdate) {
@@ -161,7 +167,11 @@ pub async fn execute_sync_plan(
     };
     let providers = providers(&app)?;
     let control = control(&app, &pair, &job_id)?;
-    let result = runner::execute(db, &plan_id, providers, control).await;
+    let progress_app = app.clone();
+    let result = runner::execute_with_progress(db, &plan_id, providers, control, move |payload| {
+        let _ = progress_app.emit("sync:progress", payload);
+    })
+    .await;
     cleanup(&app, &job_id);
     result
 }
@@ -304,7 +314,11 @@ pub async fn resume_sync_run(app: AppHandle, job_id: String) -> Result<SyncRunSu
     };
     let providers = providers(&app)?;
     let control = control(&app, &pair, &job_id)?;
-    let result = runner::resume(db, &job_id, providers, control).await;
+    let progress_app = app.clone();
+    let result = runner::resume_with_progress(db, &job_id, providers, control, move |payload| {
+        let _ = progress_app.emit("sync:progress", payload);
+    })
+    .await;
     cleanup(&app, &job_id);
     result
 }

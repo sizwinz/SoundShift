@@ -12,7 +12,19 @@ interface AudioContextType {
   stopPreview: () => void;
 }
 
-const AudioContext = createContext<AudioContextType | null>(null);
+const NOOP_AUDIO_CONTEXT: AudioContextType = {
+  activeTrackId: null,
+  isPlaying: false,
+  progress: 0,
+  duration: 0,
+  currentTime: 0,
+  error: null,
+  playPreview: () => {},
+  pausePreview: () => {},
+  stopPreview: () => {},
+};
+
+const AudioContext = createContext<AudioContextType>(NOOP_AUDIO_CONTEXT);
 
 export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [activeTrackId, setActiveTrackId] = useState<string | null>(null);
@@ -55,7 +67,9 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     audio.addEventListener("error", handleError);
 
     return () => {
-      audio.pause();
+      if (audio.src) {
+        audio.pause();
+      }
       audio.removeEventListener("timeupdate", handleTimeUpdate);
       audio.removeEventListener("ended", handleEnded);
       audio.removeEventListener("error", handleError);
@@ -70,13 +84,17 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     // If already playing this track, toggle pause
     if (activeTrackId === trackId && isPlaying) {
-      audio.pause();
+      if (audio.src) {
+        audio.pause();
+      }
       setIsPlaying(false);
       return;
     }
 
     // Single-active playback concurrency guarantee: stop any currently playing preview
-    audio.pause();
+    if (audio.src && !audio.paused) {
+      audio.pause();
+    }
     audio.currentTime = 0;
     audio.src = previewUrl;
 
@@ -99,7 +117,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const pausePreview = useCallback(() => {
     const audio = audioRef.current;
     if (audio) {
-      audio.pause();
+      if (audio.src) audio.pause();
       setIsPlaying(false);
     }
   }, []);
@@ -107,7 +125,7 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const stopPreview = useCallback(() => {
     const audio = audioRef.current;
     if (audio) {
-      audio.pause();
+      if (audio.src) audio.pause();
       audio.currentTime = 0;
       setIsPlaying(false);
       setActiveTrackId(null);
@@ -136,9 +154,5 @@ export const AudioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 };
 
 export function useAudioPreview(): AudioContextType {
-  const context = useContext(AudioContext);
-  if (!context) {
-    throw new Error("useAudioPreview must be used within an AudioProvider");
-  }
-  return context;
+  return useContext(AudioContext);
 }

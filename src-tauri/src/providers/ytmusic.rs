@@ -1,4 +1,4 @@
-use crate::auth::sapisid::generate_sapisid_hash;
+use crate::auth::sapisid::generate_youtube_auth_header;
 use crate::models::{Playlist, SourceTrack};
 use crate::providers::contracts::{
     MutationOutcome, OccurrenceOutcome, OccurrenceStatus, PlaylistOccurrence, PlaylistRead,
@@ -9,42 +9,69 @@ use async_trait::async_trait;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, COOKIE, USER_AGENT};
 use serde_json::{json, Value};
 
+#[derive(Clone, Default)]
+pub struct YouTubeMusicSessionCache {
+    visitor_data: std::sync::Arc<std::sync::Mutex<Option<(String, String)>>>,
+}
+
+impl YouTubeMusicSessionCache {
+    /// Clears any cached YouTube Music visitor context.
+    pub fn clear(&self) {
+        if let Ok(mut guard) = self.visitor_data.lock() {
+            *guard = None;
+        }
+    }
+
+    fn visitor_for(&self, cookie_str: &str) -> Option<String> {
+        self.visitor_data
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone())
+            .filter(|(cached_cookie, _)| cached_cookie == cookie_str)
+            .map(|(_, visitor)| visitor)
+    }
+
+    fn set_visitor(&self, cookie_str: &str, visitor: String) {
+        if let Ok(mut guard) = self.visitor_data.lock() {
+            *guard = Some((cookie_str.to_string(), visitor));
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct YouTubeMusicProvider {
     client: reqwest::Client,
     cookie_str: String,
     sapisid: String,
+    visitor_data: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    session_cache: YouTubeMusicSessionCache,
     #[cfg(test)]
     edit_url: Option<String>,
 }
 
 impl YouTubeMusicProvider {
     pub fn new(token: String) -> Self {
+        Self::with_session_cache(token, YouTubeMusicSessionCache::default())
+    }
+
+    /// Builds a YouTube Music provider backed by a shared visitor context cache.
+    pub fn with_session_cache(token: String, session_cache: YouTubeMusicSessionCache) -> Self {
         let (cookie_str, sapisid) = if token.contains('=') {
-            let extracted = token
-                .split(';')
-                .find_map(|part| {
+            let find_cookie = |target: &str| {
+                token.split(';').find_map(|part| {
                     let mut kv = part.trim().splitn(2, '=');
                     let k = kv.next()?.trim();
                     let v = kv.next()?.trim();
-                    if k == "SAPISID" {
+                    if k == target && !v.is_empty() {
                         Some(v.to_string())
                     } else {
                         None
                     }
                 })
-                .or_else(|| {
-                    token.split(';').find_map(|part| {
-                        let mut kv = part.trim().splitn(2, '=');
-                        let k = kv.next()?.trim();
-                        let v = kv.next()?.trim();
-                        if k == "__Secure-3PAPISID" {
-                            Some(v.to_string())
-                        } else {
-                            None
-                        }
-                    })
-                })
+            };
+            let extracted = find_cookie("SAPISID")
+                .or_else(|| find_cookie("__Secure-3PAPISID"))
+                .or_else(|| find_cookie("__Secure-1PAPISID"))
                 .unwrap_or_else(|| token.clone());
             (token, extracted)
         } else {
@@ -53,6 +80,7 @@ impl YouTubeMusicProvider {
             (cookie_str, sapisid)
         };
 
+        let cached_visitor = session_cache.visitor_for(&cookie_str);
         Self {
             client: reqwest::Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(12))
@@ -63,8 +91,24 @@ impl YouTubeMusicProvider {
                 .unwrap_or_else(|_| reqwest::Client::new()),
             cookie_str,
             sapisid,
+            visitor_data: std::sync::Arc::new(std::sync::Mutex::new(cached_visitor)),
+            session_cache,
             #[cfg(test)]
             edit_url: None,
+        }
+    }
+
+    fn capture_visitor_data(&self, value: &Value) {
+        if let Some(visitor) = value
+            .pointer("/responseContext/visitorData")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        {
+            if let Ok(mut guard) = self.visitor_data.lock() {
+                *guard = Some(visitor.to_string());
+            }
+            self.session_cache
+                .set_visitor(&self.cookie_str, visitor.to_string());
         }
     }
 
@@ -73,44 +117,32 @@ impl YouTubeMusicProvider {
         playlist_id: &str,
         tx: Option<tokio::sync::mpsc::Sender<Vec<SourceTrack>>>,
     ) -> Result<PlaylistRead, ProviderError> {
-        let headers = self.build_headers().map_err(ProviderError::before_send)?;
-        let browse_id = if playlist_id.starts_with("VL") {
+        let browse_id = if playlist_id == "FEmusic_liked_videos" {
+            "FEmusic_liked_videos".to_string()
+        } else if playlist_id == "LM" || playlist_id == "VLLM" {
+            "VLLM".to_string()
+        } else if playlist_id.starts_with("VL") {
             playlist_id.to_string()
         } else {
             format!("VL{}", playlist_id)
         };
 
         let body = json!({
-            "context": Self::client_context(),
+            "context": self.request_context(),
             "browseId": browse_id
         });
 
         let endpoint = "https://music.youtube.com/youtubei/v1/browse";
         #[cfg(test)]
         let endpoint = self.edit_url.as_deref().unwrap_or(endpoint);
-        let res = self
-            .client
-            .post(endpoint)
-            .headers(headers.clone())
-            .json(&body)
-            .send()
-            .await
-            .map_err(ProviderError::read_transport)?;
-
-        if !res.status().is_success() {
-            return Err(ProviderError::read_http(
-                res.status().as_u16(),
-                res.headers(),
-            ));
-        }
-
-        let json: Value = res.json().await.map_err(|_| {
-            ProviderError::new(
-                ProviderErrorKind::MalformedResponse,
-                SendCertainty::NotSent,
+        let json = self
+            .post_json_read(
+                "reading playlist",
+                endpoint,
+                &body,
                 "Invalid playlist response schema",
             )
-        })?;
+            .await?;
 
         let mut all_tracks = Vec::new();
         let mut remote_ids = Vec::new();
@@ -118,10 +150,18 @@ impl YouTubeMusicProvider {
 
         // Parse initial batch - support both twoColumnBrowseResultsRenderer (desktop web)
         // and singleColumnBrowseResultsRenderer (mobile/tablet layout)
-        let shelf = json.pointer("/contents/twoColumnBrowseResultsRenderer/secondaryContents/sectionListRenderer/contents/0/musicPlaylistShelfRenderer")
-            .or_else(|| json.pointer("/contents/twoColumnBrowseResultsRenderer/secondaryContents/sectionListRenderer/contents/0/musicShelfRenderer"))
-            .or_else(|| json.pointer("/contents/singleColumnBrowseResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents/0/musicPlaylistShelfRenderer"))
-            .or_else(|| json.pointer("/contents/singleColumnBrowseResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents/0/musicShelfRenderer"));
+        let sections = json
+            .pointer("/contents/twoColumnBrowseResultsRenderer/secondaryContents/sectionListRenderer/contents")
+            .or_else(|| json.pointer("/contents/singleColumnBrowseResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents"))
+            .and_then(|v| v.as_array());
+
+        let shelf = sections.and_then(|arr| {
+            arr.iter().find_map(|section| {
+                section
+                    .get("musicPlaylistShelfRenderer")
+                    .or_else(|| section.get("musicShelfRenderer"))
+            })
+        });
 
         let shelf_obj = shelf.ok_or_else(|| {
             ProviderError::new(
@@ -131,7 +171,19 @@ impl YouTubeMusicProvider {
             )
         })?;
         {
-            if let Some(items) = shelf_obj["contents"].as_array() {
+            let empty_items: Vec<Value> = Vec::new();
+            let items: &[Value] = match shelf_obj.get("contents") {
+                None | Some(Value::Null) => &empty_items,
+                Some(Value::Array(arr)) => arr.as_slice(),
+                Some(_) => {
+                    return Err(ProviderError::new(
+                        ProviderErrorKind::MalformedResponse,
+                        SendCertainty::NotSent,
+                        "Playlist item schema mismatch; incomplete read",
+                    ));
+                }
+            };
+            {
                 let mut chunk = Vec::new();
                 for item in items {
                     let renderer = &item["musicResponsiveListItemRenderer"];
@@ -166,12 +218,6 @@ impl YouTubeMusicProvider {
                                 .map(|s| s.to_string())
                         })
                     });
-            } else {
-                return Err(ProviderError::new(
-                    ProviderErrorKind::MalformedResponse,
-                    SendCertainty::NotSent,
-                    "Playlist item schema mismatch; incomplete read",
-                ));
             }
         }
 
@@ -190,33 +236,19 @@ impl YouTubeMusicProvider {
                 token
             );
             let cont_body = json!({
-                "context": Self::client_context(),
+                "context": self.request_context(),
             });
 
             #[cfg(test)]
             let url = self.edit_url.clone().unwrap_or(url);
-            let cont_res = self
-                .client
-                .post(&url)
-                .headers(headers.clone())
-                .json(&cont_body)
-                .send()
-                .await
-                .map_err(ProviderError::read_transport)?;
-
-            if !cont_res.status().is_success() {
-                return Err(ProviderError::read_http(
-                    cont_res.status().as_u16(),
-                    cont_res.headers(),
-                ));
-            }
-            let cont_json: Value = cont_res.json().await.map_err(|_| {
-                ProviderError::new(
-                    ProviderErrorKind::MalformedResponse,
-                    SendCertainty::NotSent,
+            let cont_json = self
+                .post_json_read(
+                    "reading playlist tracks",
+                    &url,
+                    &cont_body,
                     "Invalid continuation response schema",
                 )
-            })?;
+                .await?;
 
             let cont_items = cont_json.pointer("/continuationContents/musicPlaylistShelfContinuation/contents")
                 .or_else(|| cont_json.pointer("/continuationContents/musicShelfContinuation/contents"))
@@ -346,10 +378,15 @@ impl YouTubeMusicProvider {
         }
     }
 
+    fn client_version() -> String {
+        format!("1.{}.01.00", chrono::Utc::now().format("%Y%m%d"))
+    }
+
     fn build_headers(&self) -> Result<HeaderMap, String> {
         let mut headers = HeaderMap::new();
         let origin = "https://music.youtube.com";
-        let auth_val = generate_sapisid_hash(&self.sapisid, origin);
+        let auth_val = generate_youtube_auth_header(&self.cookie_str, &self.sapisid, origin);
+        let client_ver = Self::client_version();
 
         headers.insert(
             AUTHORIZATION,
@@ -369,6 +406,20 @@ impl YouTubeMusicProvider {
             HeaderValue::from_static("https://music.youtube.com"),
         );
         headers.insert("X-Goog-AuthUser", HeaderValue::from_static("0"));
+        headers.insert("X-YouTube-Client-Name", HeaderValue::from_static("67"));
+        if let Ok(ver_hdr) = HeaderValue::from_str(&client_ver) {
+            headers.insert("X-YouTube-Client-Version", ver_hdr);
+        }
+        if let Some(visitor) = self
+            .visitor_data
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone())
+        {
+            if let Ok(visitor_hdr) = HeaderValue::from_str(&visitor) {
+                headers.insert("X-Goog-Visitor-Id", visitor_hdr);
+            }
+        }
 
         if let Ok(c) = HeaderValue::from_str(&self.cookie_str) {
             headers.insert(COOKIE, c);
@@ -388,11 +439,121 @@ impl YouTubeMusicProvider {
         json!({
             "client": {
                 "clientName": "WEB_REMIX",
-                "clientVersion": "1.20240101.01.00",
+                "clientVersion": Self::client_version(),
                 "hl": "en",
                 "gl": "US"
+            },
+            "user": {
+                "lockedSafetyMode": false
             }
         })
+    }
+
+    fn request_context(&self) -> Value {
+        let mut ctx = Self::client_context();
+        let visitor = self
+            .visitor_data
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone())
+            .or_else(|| self.session_cache.visitor_for(&self.cookie_str));
+        if let Some(visitor) = visitor {
+            ctx["client"]["visitorData"] = json!(visitor);
+        }
+        ctx
+    }
+
+    async fn post_json_read(
+        &self,
+        action: &str,
+        endpoint: &str,
+        body: &Value,
+        invalid_json_msg: &str,
+    ) -> Result<Value, ProviderError> {
+        let mut attempt = 0u32;
+        loop {
+            let headers = self.build_headers().map_err(ProviderError::before_send)?;
+            let response = self
+                .client
+                .post(endpoint)
+                .headers(headers)
+                .json(body)
+                .send()
+                .await
+                .map_err(ProviderError::read_transport)?;
+            if response.status().is_success() {
+                let value = response.json::<Value>().await.map_err(|_| {
+                    ProviderError::new(
+                        ProviderErrorKind::MalformedResponse,
+                        SendCertainty::NotSent,
+                        invalid_json_msg,
+                    )
+                })?;
+                self.capture_visitor_data(&value);
+                return Ok(value);
+            }
+            let status = response.status().as_u16();
+            let err =
+                ProviderError::read_http_for("YouTube Music", action, status, response.headers());
+            if status == 429 && attempt < 2 {
+                let wait_ms = err.retry_after_ms.unwrap_or(1_200);
+                if wait_ms <= 4_000 {
+                    attempt += 1;
+                    tokio::time::sleep(std::time::Duration::from_millis(wait_ms)).await;
+                    continue;
+                }
+            }
+            return Err(err);
+        }
+    }
+
+    fn extract_innertube_error(body: &str) -> Option<String> {
+        let trimmed = body.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        if let Ok(json) = serde_json::from_str::<Value>(trimmed) {
+            let status = json.pointer("/error/status").and_then(|v| v.as_str());
+            let message = json.pointer("/error/message").and_then(|v| v.as_str());
+            match (status, message) {
+                (Some(s), Some(m)) => return Some(format!("{}: {}", s, m)),
+                (None, Some(m)) => return Some(m.to_string()),
+                (Some(s), None) => return Some(s.to_string()),
+                _ => {}
+            }
+        }
+        let snippet: String = trimmed.chars().take(180).collect();
+        Some(snippet)
+    }
+
+    fn find_playlist_id(value: &Value) -> Option<String> {
+        if let Some(id) = value.get("playlistId").and_then(|v| v.as_str()) {
+            if !id.trim().is_empty() {
+                return Some(id.to_string());
+            }
+        }
+        if let Some(id) = value.get("createdPlaylistId").and_then(|v| v.as_str()) {
+            if !id.trim().is_empty() {
+                return Some(id.to_string());
+            }
+        }
+        if let Some(actions) = value.get("actions").and_then(|v| v.as_array()) {
+            for action in actions {
+                if let Some(found) = Self::find_playlist_id(action) {
+                    return Some(found);
+                }
+            }
+        }
+        if let Some(obj) = value.as_object() {
+            for child in obj.values() {
+                if child.is_object() || child.is_array() {
+                    if let Some(found) = Self::find_playlist_id(child) {
+                        return Some(found);
+                    }
+                }
+            }
+        }
+        None
     }
 
     pub fn parse_duration_to_ms(duration_str: &str) -> u64 {
@@ -412,6 +573,48 @@ impl YouTubeMusicProvider {
             }
             _ => 0,
         }
+    }
+
+    fn is_signed_out_browse_response(value: &Value) -> bool {
+        if let Some(services) = value
+            .pointer("/responseContext/serviceTrackingParams")
+            .and_then(|v| v.as_array())
+        {
+            for service in services {
+                if let Some(params) = service.get("params").and_then(|v| v.as_array()) {
+                    for param in params {
+                        let key = param.get("key").and_then(|v| v.as_str());
+                        let val = param.get("value").and_then(|v| v.as_str());
+                        if matches!(key, Some("logged_in" | "yt_li")) && val == Some("0") {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(sections) = value
+            .pointer("/contents/singleColumnBrowseResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents")
+            .and_then(|v| v.as_array())
+        {
+            for section in sections {
+                if let Some(items) = section
+                    .pointer("/itemSectionRenderer/contents")
+                    .and_then(|v| v.as_array())
+                {
+                    for item in items {
+                        if item
+                            .pointer("/messageRenderer/button/buttonRenderer/navigationEndpoint/signInEndpoint")
+                            .is_some()
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        false
     }
 
     fn parse_list_item_renderer(renderer: &Value) -> Option<SourceTrack> {
@@ -533,21 +736,14 @@ impl MusicProvider for YouTubeMusicProvider {
         let endpoint = "https://music.youtube.com/youtubei/v1/browse";
         #[cfg(test)]
         let endpoint = self.edit_url.as_deref().unwrap_or(endpoint);
-        let response=self.client.post(endpoint).headers(self.build_headers().map_err(ProviderError::before_send)?)
-            .json(&json!({"context":Self::client_context(),"browseId":if playlist_id.starts_with("VL"){playlist_id.to_string()}else{format!("VL{playlist_id}")}})).send().await.map_err(ProviderError::read_transport)?;
-        if !response.status().is_success() {
-            return Err(ProviderError::read_http(
-                response.status().as_u16(),
-                response.headers(),
-            ));
-        }
-        let value: Value = response.json().await.map_err(|_| {
-            ProviderError::new(
-                ProviderErrorKind::MalformedResponse,
-                SendCertainty::NotSent,
+        let value = self
+            .post_json_read(
+                "checking playlist editability",
+                endpoint,
+                &json!({"context":self.request_context(),"browseId":if playlist_id.starts_with("VL"){playlist_id.to_string()}else{format!("VL{playlist_id}")}}),
                 "YouTube playlist permissions response is malformed",
             )
-        })?;
+            .await?;
         if !editable(&value) {
             return Err(ProviderError::new(
                 ProviderErrorKind::Permission,
@@ -637,31 +833,25 @@ impl MusicProvider for YouTubeMusicProvider {
         self.check_session().await.map_err(|e| e.to_string())
     }
     async fn check_session(&self) -> Result<(), ProviderError> {
-        let headers = self.build_headers().map_err(ProviderError::before_send)?;
         let endpoint = "https://music.youtube.com/youtubei/v1/browse";
         #[cfg(test)]
         let endpoint = self.edit_url.as_deref().unwrap_or(endpoint);
-        let response = self
-            .client
-            .post(endpoint)
-            .headers(headers)
-            .json(&json!({"context":Self::client_context(),"browseId":"FEmusic_liked_playlists"}))
-            .send()
-            .await
-            .map_err(ProviderError::read_transport)?;
-        if !response.status().is_success() {
-            return Err(ProviderError::read_http(
-                response.status().as_u16(),
-                response.headers(),
-            ));
-        }
-        let value: Value = response.json().await.map_err(|_| {
-            ProviderError::new(
-                ProviderErrorKind::MalformedResponse,
-                SendCertainty::NotSent,
+        let value = self
+            .post_json_read(
+                "checking session",
+                endpoint,
+                &json!({"context":self.request_context(),"browseId":"FEmusic_liked_playlists"}),
                 "Session canary returned invalid JSON",
             )
-        })?;
+            .await?;
+        self.capture_visitor_data(&value);
+        if Self::is_signed_out_browse_response(&value) {
+            return Err(ProviderError::new(
+                ProviderErrorKind::Authentication,
+                SendCertainty::NotSent,
+                "YouTube Music session is signed out or expired (401); please reconnect YouTube Music",
+            ));
+        }
         if value.pointer("/contents/singleColumnBrowseResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents").and_then(|v|v.as_array()).is_none() {
             return Err(ProviderError::new(ProviderErrorKind::MalformedResponse,SendCertainty::NotSent,"Session canary schema mismatch; reconnect or review provider availability"));
         }
@@ -671,7 +861,7 @@ impl MusicProvider for YouTubeMusicProvider {
     async fn list_playlists(&self) -> Result<Vec<Playlist>, String> {
         let headers = self.build_headers()?;
         let body = json!({
-            "context": Self::client_context(),
+            "context": self.request_context(),
             "browseId": "FEmusic_liked_playlists"
         });
 
@@ -805,37 +995,97 @@ impl MusicProvider for YouTubeMusicProvider {
     }
 
     async fn search_track(&self, query: &str) -> Result<Vec<SourceTrack>, String> {
-        let headers = self.build_headers()?;
+        self.search_track_resilient(query)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn search_track_resilient(&self, query: &str) -> Result<Vec<SourceTrack>, ProviderError> {
+        let headers = self.build_headers().map_err(ProviderError::before_send)?;
+        let search_endpoint = "https://music.youtube.com/youtubei/v1/search";
+        #[cfg(test)]
+        let search_endpoint = self.edit_url.as_deref().unwrap_or(search_endpoint);
 
         // Primary search: Songs filter per D-05
         let body = json!({
-            "context": Self::client_context(),
+            "context": self.request_context(),
             "query": query,
             "params": "Eg-KAQwIARAAGAAgACgAMABqChAMEAMQBBAFEAo%3D"
         });
 
         let res = self
             .client
-            .post("https://music.youtube.com/youtubei/v1/search")
+            .post(search_endpoint)
             .headers(headers.clone())
             .json(&body)
             .send()
             .await
-            .map_err(|e| format!("InnerTube search failed: {}", e))?;
+            .map_err(ProviderError::read_transport)?;
+
+        if !res.status().is_success() {
+            return Err(ProviderError::read_http_for(
+                "YouTube Music",
+                "searching tracks",
+                res.status().as_u16(),
+                res.headers(),
+            ));
+        }
 
         let mut results = Vec::new();
+        if let Ok(json) = res.json::<Value>().await {
+            if let Some(sections) = json.pointer("/contents/tabbedSearchResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents")
+                .and_then(|arr| arr.as_array())
+            {
+                for section in sections {
+                    if let Some(contents) = section.pointer("/musicCardShelfRenderer/contents")
+                        .or_else(|| section.pointer("/musicShelfRenderer/contents"))
+                        .and_then(|arr| arr.as_array())
+                    {
+                        for item in contents.iter().take(5) {
+                            let renderer = &item["musicResponsiveListItemRenderer"];
+                            if !renderer.is_null() {
+                                if let Some(track) = Self::parse_list_item_renderer(renderer) {
+                                    results.push(track);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
-        if res.status().is_success() {
-            if let Ok(json) = res.json::<Value>().await {
-                // Parse top result and songs shelf items per D-07
-                if let Some(sections) = json.pointer("/contents/tabbedSearchResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents")
+        // Secondary fallback: Video search if songs filter yielded no candidate per D-05
+        if results.is_empty() {
+            let video_body = json!({
+                "context": self.request_context(),
+                "query": query,
+                "params": "Eg-KAQwIAhABGAAgACgAMABqChAMEAMQBBAFEAo%3D"
+            });
+
+            let video_res = self
+                .client
+                .post(search_endpoint)
+                .headers(headers)
+                .json(&video_body)
+                .send()
+                .await
+                .map_err(ProviderError::read_transport)?;
+
+            if !video_res.status().is_success() {
+                return Err(ProviderError::read_http_for(
+                    "YouTube Music",
+                    "searching tracks",
+                    video_res.status().as_u16(),
+                    video_res.headers(),
+                ));
+            }
+
+            if let Ok(video_json) = video_res.json::<Value>().await {
+                if let Some(sections) = video_json.pointer("/contents/tabbedSearchResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents")
                     .and_then(|arr| arr.as_array())
                 {
                     for section in sections {
-                        if let Some(contents) = section.pointer("/musicCardShelfRenderer/contents")
-                            .or_else(|| section.pointer("/musicShelfRenderer/contents"))
-                            .and_then(|arr| arr.as_array())
-                        {
+                        if let Some(contents) = section.pointer("/musicShelfRenderer/contents").and_then(|arr| arr.as_array()) {
                             for item in contents.iter().take(5) {
                                 let renderer = &item["musicResponsiveListItemRenderer"];
                                 if !renderer.is_null() {
@@ -850,46 +1100,166 @@ impl MusicProvider for YouTubeMusicProvider {
             }
         }
 
-        // Secondary fallback: Video search if songs filter yielded no candidate per D-05
-        if results.is_empty() {
-            let video_body = json!({
-                "context": Self::client_context(),
-                "query": query,
-                "params": "Eg-KAQwIAhABGAAgACgAMABqChAMEAMQBBAFEAo%3D"
-            });
+        Ok(results)
+    }
 
-            if let Ok(video_res) = self
-                .client
-                .post("https://music.youtube.com/youtubei/v1/search")
-                .headers(headers)
-                .json(&video_body)
-                .send()
-                .await
-            {
-                if video_res.status().is_success() {
-                    if let Ok(video_json) = video_res.json::<Value>().await {
-                        if let Some(sections) = video_json.pointer("/contents/tabbedSearchResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents")
-                            .and_then(|arr| arr.as_array())
-                        {
-                            for section in sections {
-                                if let Some(contents) = section.pointer("/musicShelfRenderer/contents").and_then(|arr| arr.as_array()) {
-                                    for item in contents.iter().take(5) {
-                                        let renderer = &item["musicResponsiveListItemRenderer"];
-                                        if !renderer.is_null() {
-                                            if let Some(track) = Self::parse_list_item_renderer(renderer) {
-                                                results.push(track);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+    async fn fetch_track_by_id(
+        &self,
+        video_id: &str,
+    ) -> Result<Option<SourceTrack>, ProviderError> {
+        let headers = self.build_headers().map_err(ProviderError::before_send)?;
+        let endpoint = "https://music.youtube.com/youtubei/v1/next";
+        #[cfg(test)]
+        let endpoint = self.edit_url.as_deref().unwrap_or(endpoint);
+        let res = self
+            .client
+            .post(endpoint)
+            .headers(headers)
+            .json(&json!({
+                "context": self.request_context(),
+                "videoId": video_id
+            }))
+            .send()
+            .await
+            .map_err(ProviderError::read_transport)?;
+        if !res.status().is_success() {
+            return Err(ProviderError::read_http_for(
+                "YouTube Music",
+                "loading track metadata",
+                res.status().as_u16(),
+                res.headers(),
+            ));
+        }
+        let json: Value = match res.json().await {
+            Ok(v) => v,
+            Err(_) => return Ok(None),
+        };
+        let contents = json
+            .pointer("/contents/singleColumnMusicWatchNextResultsRenderer/tabbedRenderer/watchNextTabbedResultsRenderer/tabs/0/tabRenderer/content/musicQueueRenderer/content/playlistPanelRenderer/contents")
+            .and_then(|v| v.as_array());
+        if let Some(items) = contents {
+            for item in items {
+                let renderer = &item["playlistPanelVideoRenderer"];
+                if renderer.is_null() {
+                    continue;
+                }
+                let vid = renderer["videoId"].as_str().unwrap_or("");
+                if vid != video_id {
+                    continue;
+                }
+                let title = renderer["title"]["runs"][0]["text"]
+                    .as_str()
+                    .unwrap_or("Unknown")
+                    .to_string();
+                let mut artists = Vec::new();
+                if let Some(runs) = renderer["longBylineText"]["runs"].as_array() {
+                    for run in runs {
+                        let txt = run["text"].as_str().unwrap_or("").trim();
+                        if txt == "•" {
+                            break;
+                        }
+                        if !txt.is_empty() && txt != "," && txt != "&" {
+                            artists.push(txt.to_string());
                         }
                     }
                 }
+                if artists.is_empty() {
+                    if let Some(byline) = renderer["shortBylineText"]["runs"][0]["text"].as_str() {
+                        artists.push(byline.to_string());
+                    }
+                }
+                let duration_ms = renderer["lengthText"]["runs"][0]["text"]
+                    .as_str()
+                    .map(Self::parse_duration_to_ms)
+                    .unwrap_or(0);
+                let thumbnail_url = renderer["thumbnail"]["thumbnails"]
+                    .as_array()
+                    .and_then(|arr| arr.last())
+                    .and_then(|t| t["url"].as_str())
+                    .map(|s| s.to_string());
+                return Ok(Some(SourceTrack {
+                    id: vid.to_string(),
+                    title,
+                    artists,
+                    album: None,
+                    duration_ms,
+                    isrc: None,
+                    is_explicit: false,
+                    is_playable: true,
+                    preview_url: None,
+                    thumbnail_url,
+                }));
             }
         }
+        Ok(None)
+    }
 
-        Ok(results)
+    async fn create_playlist_checked(
+        &self,
+        title: &str,
+        description: Option<&str>,
+    ) -> Result<String, ProviderError> {
+        let headers = self.build_headers().map_err(ProviderError::before_send)?;
+        let stripped = title.replace(['<', '>'], "");
+        let clean_title = if stripped.trim().is_empty() {
+            "Transferred Playlist"
+        } else {
+            stripped.trim()
+        };
+        let body = json!({
+            "context": self.request_context(),
+            "title": clean_title,
+            "description": description.unwrap_or(""),
+            "privacyStatus": "PRIVATE"
+        });
+
+        let endpoint = "https://music.youtube.com/youtubei/v1/playlist/create";
+        #[cfg(test)]
+        let endpoint = self.edit_url.as_deref().unwrap_or(endpoint);
+        let res = self
+            .client
+            .post(endpoint)
+            .headers(headers)
+            .json(&body)
+            .send()
+            .await
+            .map_err(ProviderError::transport)?;
+
+        if !res.status().is_success() {
+            let status = res.status().as_u16();
+            let res_headers = res.headers().clone();
+            let body_text = res.text().await.unwrap_or_default();
+            let detail = Self::extract_innertube_error(&body_text);
+            return Err(ProviderError::http_with_detail(
+                status,
+                &res_headers,
+                detail.as_deref(),
+            ));
+        }
+
+        let json: Value = res.json().await.map_err(|_| {
+            ProviderError::new(
+                ProviderErrorKind::MalformedResponse,
+                SendCertainty::MayHaveApplied,
+                "Invalid playlist creation response; check YouTube Music before retrying",
+            )
+        })?;
+
+        if let Some(err_msg) = json.pointer("/error/message").and_then(|v| v.as_str()) {
+            return Err(ProviderError::new(
+                crate::providers::error::classify_error(err_msg),
+                SendCertainty::Rejected,
+                &format!("YouTube Music rejected playlist creation: {}", err_msg),
+            ));
+        }
+
+        Self::find_playlist_id(&json).ok_or_else(|| {
+            ProviderError::new(
+                ProviderErrorKind::MalformedResponse,
+                SendCertainty::MayHaveApplied,
+                "YouTube Music response omitted playlistId; check provider before retrying",
+            )
+        })
     }
 
     async fn create_playlist(
@@ -897,36 +1267,9 @@ impl MusicProvider for YouTubeMusicProvider {
         title: &str,
         description: Option<&str>,
     ) -> Result<String, String> {
-        let headers = self.build_headers()?;
-        let body = json!({
-            "context": Self::client_context(),
-            "title": title,
-            "description": description.unwrap_or(""),
-            "privacyStatus": "PRIVATE"
-        });
-
-        let res = self
-            .client
-            .post("https://music.youtube.com/youtubei/v1/playlist/create")
-            .headers(headers)
-            .json(&body)
-            .send()
+        self.create_playlist_checked(title, description)
             .await
-            .map_err(|e| format!("InnerTube playlist creation failed: {}", e))?;
-
-        if !res.status().is_success() {
-            return Err(format!(
-                "Playlist creation failed with status: {}",
-                res.status()
-            ));
-        }
-
-        let json: Value = res.json().await.map_err(|e| e.to_string())?;
-        let playlist_id = json["playlistId"]
-            .as_str()
-            .ok_or_else(|| "Failed to extract created playlist ID".to_string())?;
-
-        Ok(playlist_id.to_string())
+            .map_err(|e| e.to_string())
     }
 
     async fn add_tracks_to_playlist(
@@ -944,10 +1287,11 @@ impl MusicProvider for YouTubeMusicProvider {
         Ok(())
     }
 
-    async fn add_occurrences(
+    async fn add_occurrences_with_options(
         &self,
         playlist_id: &str,
         track_ids: &[String],
+        skip_duplicates: bool,
     ) -> Result<MutationOutcome, ProviderError> {
         let headers = self.build_headers().map_err(ProviderError::before_send)?;
         let clean_id = playlist_id.trim_start_matches("VL");
@@ -955,11 +1299,18 @@ impl MusicProvider for YouTubeMusicProvider {
         let actions: Vec<Value> = track_ids
             .iter()
             .map(|id| {
-                json!({
-                    "action": "ACTION_ADD_VIDEO",
-                    "addedVideoId": id,
-                    "dedupeOption": "DEDUPE_OPTION_SKIP"
-                })
+                if skip_duplicates {
+                    json!({
+                        "action": "ACTION_ADD_VIDEO",
+                        "addedVideoId": id,
+                        "dedupeOption": "DEDUPE_OPTION_SKIP"
+                    })
+                } else {
+                    json!({
+                        "action": "ACTION_ADD_VIDEO",
+                        "addedVideoId": id
+                    })
+                }
             })
             .collect();
 
@@ -994,6 +1345,15 @@ impl MusicProvider for YouTubeMusicProvider {
         })?;
 
         Ok(Self::parse_add_outcome(&json, track_ids))
+    }
+
+    async fn add_occurrences(
+        &self,
+        playlist_id: &str,
+        track_ids: &[String],
+    ) -> Result<MutationOutcome, ProviderError> {
+        self.add_occurrences_with_options(playlist_id, track_ids, false)
+            .await
     }
 
     fn supports_occurrence_removal(&self) -> bool {
@@ -1502,6 +1862,71 @@ mod tests {
         assert_eq!(error.retry_after_ms, Some(60_000));
     }
 
+    #[tokio::test]
+    async fn check_session_rejects_logged_out_youtube_music_browse_response() {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        let thread = std::thread::spawn(move || {
+            let (mut socket, _) = server.accept().unwrap();
+            let mut request = [0u8; 8192];
+            socket.read(&mut request).unwrap();
+            let body = json!({
+                "responseContext": {
+                    "visitorData": "CgsxNWNxN2pRbFV1WQ==",
+                    "serviceTrackingParams": [
+                        {
+                            "service": "GFEEDBACK",
+                            "params": [{"key": "logged_in", "value": "0"}]
+                        },
+                        {
+                            "service": "CSI",
+                            "params": [{"key": "yt_li", "value": "0"}]
+                        }
+                    ]
+                },
+                "contents": {
+                    "singleColumnBrowseResultsRenderer": {
+                        "tabs": [{
+                            "tabRenderer": {
+                                "content": {
+                                    "sectionListRenderer": {
+                                        "contents": [{
+                                            "itemSectionRenderer": {
+                                                "contents": [{
+                                                    "messageRenderer": {
+                                                        "button": {
+                                                            "buttonRenderer": {
+                                                                "navigationEndpoint": {"signInEndpoint": {}}
+                                                            }
+                                                        }
+                                                    }
+                                                }]
+                                            }
+                                        }]
+                                    }
+                                }
+                            }
+                        }]
+                    }
+                }
+            })
+            .to_string();
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+        let mut provider = YouTubeMusicProvider::new("fixture".into());
+        provider.edit_url = Some(format!("http://{address}"));
+        let error = provider.check_session().await.unwrap_err();
+        thread.join().unwrap();
+        assert_eq!(error.kind, ProviderErrorKind::Authentication);
+    }
+
     #[test]
     fn test_parse_duration_to_ms() {
         assert_eq!(YouTubeMusicProvider::parse_duration_to_ms("3:45"), 225_000);
@@ -1511,6 +1936,234 @@ mod tests {
             3_735_000
         );
         assert_eq!(YouTubeMusicProvider::parse_duration_to_ms("45"), 45_000);
+    }
+
+    #[tokio::test]
+    async fn search_track_resilient_propagates_http_429_instead_of_empty_ok() {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        let thread = std::thread::spawn(move || {
+            let (mut socket, _) = server.accept().unwrap();
+            let mut request = [0u8; 8192];
+            socket.read(&mut request).unwrap();
+            write!(socket, "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 12\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+        });
+        let mut provider = YouTubeMusicProvider::new("fixture".into());
+        provider.edit_url = Some(format!("http://{address}"));
+        let err = provider
+            .search_track_resilient("Starboy")
+            .await
+            .unwrap_err();
+        thread.join().unwrap();
+        assert_eq!(err.kind, ProviderErrorKind::RateLimited);
+        assert_eq!(err.retry_after_ms, Some(12_000));
+    }
+
+    #[tokio::test]
+    async fn add_occurrences_with_options_parameterizes_dedupe_option() {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        let thread = std::thread::spawn(move || {
+            let mut bodies = Vec::new();
+            for _ in 0..2 {
+                let (mut socket, _) = server.accept().unwrap();
+                let mut bytes = [0u8; 8192];
+                let size = socket.read(&mut bytes).unwrap();
+                let req = String::from_utf8_lossy(&bytes[..size]).to_string();
+                bodies.push(req.split("\r\n\r\n").nth(1).unwrap().to_string());
+                let resp = r#"{"status":"STATUS_SUCCEEDED","playlistEditResults":[{"playlistEditVideoAddedResultData":{"videoId":"a","setVideoId":"s1"}}]}"#;
+                write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", resp.len(), resp).unwrap();
+            }
+            bodies
+        });
+        let mut provider = YouTubeMusicProvider::new("fixture".into());
+        provider.edit_url = Some(format!("http://{address}"));
+        provider
+            .add_occurrences_with_options("fixture", &["a".into()], false)
+            .await
+            .unwrap();
+        provider
+            .add_occurrences_with_options("fixture", &["a".into()], true)
+            .await
+            .unwrap();
+        let bodies = thread.join().unwrap();
+        let first: Value = serde_json::from_str(&bodies[0]).unwrap();
+        let second: Value = serde_json::from_str(&bodies[1]).unwrap();
+        assert!(first["actions"][0]["dedupeOption"].is_null());
+        assert_eq!(second["actions"][0]["dedupeOption"], "DEDUPE_OPTION_SKIP");
+    }
+
+    #[tokio::test]
+    async fn fetch_playlist_supports_liked_videos_without_vl_prefix() {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        let thread = std::thread::spawn(move || {
+            let mut captured = String::new();
+            for i in 0..2 {
+                let (mut socket, _) = server.accept().unwrap();
+                let mut bytes = [0u8; 8192];
+                let size = socket.read(&mut bytes).unwrap();
+                let req = String::from_utf8_lossy(&bytes[..size]).to_string();
+                if i == 0 {
+                    captured = req.split("\r\n\r\n").nth(1).unwrap().to_string();
+                }
+                let body = json!({"contents":{"twoColumnBrowseResultsRenderer":{"secondaryContents":{"sectionListRenderer":{"contents":[{"musicShelfRenderer":{"contents":[]}}]}}}}}).to_string();
+                write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+            }
+            captured
+        });
+        let mut provider = YouTubeMusicProvider::new("fixture".into());
+        provider.edit_url = Some(format!("http://{address}"));
+        provider
+            .read_playlist("FEmusic_liked_videos")
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_str(&thread.join().unwrap()).unwrap();
+        assert_eq!(body["browseId"], "FEmusic_liked_videos");
+    }
+
+    #[tokio::test]
+    async fn empty_playlist_shelf_without_contents_reads_as_zero_tracks() {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        let thread = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut socket, _) = server.accept().unwrap();
+                let mut bytes = [0u8; 8192];
+                socket.read(&mut bytes).unwrap();
+                let body = json!({
+                    "contents": {
+                        "twoColumnBrowseResultsRenderer": {
+                            "secondaryContents": {
+                                "sectionListRenderer": {
+                                    "contents": [{
+                                        "musicPlaylistShelfRenderer": {
+                                            "playlistId": "PL_empty",
+                                            "trackingParams": "abc"
+                                        }
+                                    }]
+                                }
+                            }
+                        }
+                    }
+                })
+                .to_string();
+                write!(
+                    socket,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .unwrap();
+            }
+        });
+        let mut provider = YouTubeMusicProvider::new("fixture".into());
+        provider.edit_url = Some(format!("http://{address}"));
+        let read = provider.read_playlist("PL_empty").await.unwrap();
+        thread.join().unwrap();
+        assert!(read.complete);
+        assert!(read.occurrences.is_empty());
+    }
+
+    #[tokio::test]
+    async fn create_playlist_checked_sends_client_headers_sanitizes_title_and_captures_http_detail()
+    {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        let thread = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            for idx in 0..2 {
+                let (mut socket, _) = server.accept().unwrap();
+                let mut bytes = [0u8; 8192];
+                let size = socket.read(&mut bytes).unwrap();
+                let req = String::from_utf8_lossy(&bytes[..size]).to_string();
+                requests.push(req);
+                if idx == 0 {
+                    let body = json!({"error":{"code":400,"status":"INVALID_ARGUMENT","message":"Invalid argument"}}).to_string();
+                    write!(socket, "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+                } else {
+                    let body = json!({"actions":[{"createPlaylistServiceEndpoint":{"playlistId":"PL_nested_123"}}]}).to_string();
+                    write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+                }
+            }
+            requests
+        });
+
+        let mut provider = YouTubeMusicProvider::new(
+            "SAPISID=base_secret; __Secure-1PAPISID=p1_secret; __Secure-3PAPISID=p3_secret".into(),
+        );
+        provider.edit_url = Some(format!("http://{address}"));
+
+        let err = provider
+            .create_playlist_checked("Infinite <3", Some("Desc"))
+            .await
+            .unwrap_err();
+        assert_eq!(err.certainty, SendCertainty::Rejected);
+        assert_eq!(err.http_status, Some(400));
+        assert!(err.detail.contains("400"));
+        assert!(err.detail.contains("Invalid argument"));
+
+        let created_id = provider
+            .create_playlist_checked("Infinite <3", Some("Desc"))
+            .await
+            .unwrap();
+        assert_eq!(created_id, "PL_nested_123");
+
+        let requests = thread.join().unwrap();
+        let first_req_lower = requests[0].to_ascii_lowercase();
+        assert!(first_req_lower.contains("x-youtube-client-name: 67"));
+        assert!(first_req_lower.contains("x-youtube-client-version: 1."));
+        assert!(requests[0].contains("SAPISIDHASH "));
+        assert!(requests[0].contains("SAPISID1PHASH "));
+        assert!(requests[0].contains("SAPISID3PHASH "));
+
+        let body_str = requests[0].split("\r\n\r\n").nth(1).unwrap();
+        let body_json: Value = serde_json::from_str(body_str).unwrap();
+        assert_eq!(body_json["title"], "Infinite 3");
+        assert!(body_json["context"]["user"].is_object());
+    }
+
+    #[tokio::test]
+    async fn read_playlist_retries_short_429_and_attributes_ytmusic() {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        let thread = std::thread::spawn(move || {
+            let mut count = 0;
+            for idx in 0..3 {
+                let (mut socket, _) = server.accept().unwrap();
+                let mut bytes = [0u8; 8192];
+                let _ = socket.read(&mut bytes);
+                count += 1;
+                if idx == 0 {
+                    write!(
+                        socket,
+                        "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 0\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                    .unwrap();
+                } else {
+                    let body = r#"{"contents":{"twoColumnBrowseResultsRenderer":{"secondaryContents":{"sectionListRenderer":{"contents":[{"musicPlaylistShelfRenderer":{"contents":[]}}]}}}}}"#;
+                    write!(
+                        socket,
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .unwrap();
+                }
+            }
+            count
+        });
+        let mut provider = YouTubeMusicProvider::new("SAPISID=123; __Secure-3PAPISID=123".into());
+        provider.edit_url = Some(format!("http://{address}"));
+        let read = provider.read_playlist("PL_empty").await.unwrap();
+        assert!(read.complete);
+        assert_eq!(thread.join().unwrap(), 3);
     }
 
     #[tokio::test]

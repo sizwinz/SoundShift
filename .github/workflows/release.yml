@@ -101,14 +101,14 @@ jobs:
           releaseBody: |
             ### SoundShift v__VERSION__
             
-            Deterministic, local-first playlist migration across Spotify and YouTube Music.
+            Deterministic, local-first playlist migration and two-way sync across Spotify and YouTube Music.
             
             #### Features & Highlights
-            - Zero API keys or manual DevTools header copying required.
-            - Inspectable staging diff with 60 FPS virtualization.
-            - 1-click snapshot rollback with immutable pre-mutation SQLite backups.
-            - Destination playlist deduplication and merge picker.
-            - Multi-threaded Tokio concurrency engine with single-writer safety for YouTube Music.
+            - Durable two-way Playlist Sync with occurrence review, conflict attribution, pause/resume/cancel, and optional hourly schedule.
+            - Embedded native WebView sessions with incognito isolation on reconnect, live session verification, and OS keychain credential storage.
+            - Inspectable staging diff with 60 FPS virtualization, unresolved track stepping, manual match overrides, and duplicate target detection.
+            - 1-click snapshot rollback backed by SQLite schema v4, immutable pre-mutation journals, and explicit crash recovery.
+            - Portable playlist export/import (JSON, CSV, M3U8), public playlist URL import, system tray mode, and Ctrl+K command palette.
           releaseDraft: false
-          prerelease: true
+          prerelease: false
           args: ${{ matrix.args }}

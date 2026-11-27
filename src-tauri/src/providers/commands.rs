@@ -7,6 +7,26 @@ use rusqlite::params;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, Manager};
 
+const PLAYLIST_TRACK_CACHE_TTL_SECS: i64 = 900;
+
+fn build_provider(
+    state: &AppState,
+    service: &str,
+    token: String,
+) -> Result<Box<dyn MusicProvider>, String> {
+    match service {
+        "spotify" => Ok(Box::new(SpotifyProvider::with_session_cache(
+            token,
+            state.spotify_cache.clone(),
+        ))),
+        "ytmusic" => Ok(Box::new(YouTubeMusicProvider::with_session_cache(
+            token,
+            state.ytmusic_cache.clone(),
+        ))),
+        _ => Err(format!("Unsupported service: {}", service)),
+    }
+}
+
 /// Lists user playlists with SQLite caching per D-01.
 /// If refresh is false and cached records exist, loads instantly from local storage.
 #[tauri::command]
@@ -57,24 +77,27 @@ pub async fn list_provider_playlists(
             .ok_or_else(|| format!("No active session found for {}", service))?
     };
 
-    let provider: Box<dyn MusicProvider> = match service.as_str() {
-        "spotify" => Box::new(SpotifyProvider::new(token)),
-        "ytmusic" => Box::new(YouTubeMusicProvider::new(token)),
-        _ => return Err(format!("Unsupported service: {}", service)),
-    };
+    let provider = build_provider(&state, &service, token)?;
 
     let playlists = provider.list_playlists().await?;
 
-    // Persist into SQLite cache
+    // Persist into SQLite cache, removing playlists no longer returned by provider
     {
-        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
 
+        tx.execute(
+            "DELETE FROM cached_playlists WHERE service = ?1",
+            params![service],
+        )
+        .map_err(|e| e.to_string())?;
+
         for p in &playlists {
-            let _ = conn.execute(
+            tx.execute(
                 "INSERT OR REPLACE INTO cached_playlists 
                  (id, service, title, description, track_count, is_public, cover_url, updated_at) 
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -88,8 +111,10 @@ pub async fn list_provider_playlists(
                     p.cover_url,
                     now
                 ],
-            );
+            )
+            .map_err(|e| e.to_string())?;
         }
+        tx.commit().map_err(|e| e.to_string())?;
     }
 
     Ok(playlists)
@@ -109,11 +134,7 @@ pub async fn check_provider_connection(
             .ok_or_else(|| format!("No active session found for {}", service))?
     };
 
-    match service.as_str() {
-        "spotify" => SpotifyProvider::new(token).canary().await,
-        "ytmusic" => YouTubeMusicProvider::new(token).canary().await,
-        _ => Err(format!("Unsupported service: {}", service)),
-    }
+    build_provider(&state, &service, token)?.canary().await
 }
 
 /// Ingests playlist tracks in 100-track streaming chunks per D-02.
@@ -126,22 +147,31 @@ pub async fn fetch_playlist_tracks(
     refresh: Option<bool>,
 ) -> Result<Vec<SourceTrack>, String> {
     let state = app.state::<AppState>();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
 
-    // Pass 1: Try reading from local SQLite cache if refresh not requested
+    // Pass 1: Try reading from local SQLite cache if refresh not requested and within TTL
     if refresh != Some(true) {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
             .prepare(
-                "SELECT track_data 
+                "SELECT track_data, updated_at 
                  FROM cached_tracks 
-                 WHERE playlist_id = ?1 
+                 WHERE playlist_id = ?1 AND (service = ?2 OR service = '')
                  ORDER BY position ASC",
             )
             .map_err(|e| e.to_string())?;
 
+        let mut latest_updated_at: i64 = 0;
         let cached_rows: Result<Vec<SourceTrack>, _> = stmt
-            .query_map(params![playlist_id], |row| {
+            .query_map(params![playlist_id, service], |row| {
                 let json_str: String = row.get(0)?;
+                let updated: i64 = row.get::<_, Option<i64>>(1)?.unwrap_or(0);
+                if updated > latest_updated_at {
+                    latest_updated_at = updated;
+                }
                 serde_json::from_str(&json_str).map_err(|e| {
                     rusqlite::Error::FromSqlConversionFailure(
                         0,
@@ -152,9 +182,13 @@ pub async fn fetch_playlist_tracks(
             })
             .and_then(|mapped| mapped.collect());
 
-        if let Ok(tracks) = cached_rows {
-            if !tracks.is_empty() {
-                return Ok(tracks);
+        let is_fresh = latest_updated_at == 0
+            || now.saturating_sub(latest_updated_at) <= PLAYLIST_TRACK_CACHE_TTL_SECS;
+        if is_fresh {
+            if let Ok(tracks) = cached_rows {
+                if !tracks.is_empty() {
+                    return Ok(tracks);
+                }
             }
         }
     }
@@ -166,17 +200,12 @@ pub async fn fetch_playlist_tracks(
             .ok_or_else(|| format!("No active session found for {}", service))?
     };
 
-    let provider: Box<dyn MusicProvider> = match service.as_str() {
-        "spotify" => Box::new(SpotifyProvider::new(token)),
-        "ytmusic" => Box::new(YouTubeMusicProvider::new(token)),
-        _ => return Err(format!("Unsupported service: {}", service)),
-    };
+    let provider = build_provider(&state, &service, token)?;
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<SourceTrack>>(32);
     let app_handle = app.clone();
     let p_id = playlist_id.clone();
 
-    // Stream chunks live to frontend per D-02
     let stream_task = tokio::spawn(async move {
         let mut loaded = 0;
         while let Some(chunk) = rx.recv().await {
@@ -194,14 +223,14 @@ pub async fn fetch_playlist_tracks(
 
     let _ = stream_task.await;
 
-    // Cache tracks into SQLite
+    // Cache tracks into SQLite scoped by service + updated_at
     {
         let mut conn = state.db.lock().map_err(|e| e.to_string())?;
         let tx = conn.transaction().map_err(|e| e.to_string())?;
 
         tx.execute(
-            "DELETE FROM cached_tracks WHERE playlist_id = ?1",
-            params![playlist_id],
+            "DELETE FROM cached_tracks WHERE playlist_id = ?1 AND (service = ?2 OR service = '')",
+            params![playlist_id, service],
         )
         .map_err(|e| e.to_string())?;
 
@@ -209,9 +238,9 @@ pub async fn fetch_playlist_tracks(
             let json_str = serde_json::to_string(track).map_err(|e| e.to_string())?;
             tx.execute(
                 "INSERT OR REPLACE INTO cached_tracks 
-                 (playlist_id, track_id, position, track_data) 
-                 VALUES (?1, ?2, ?3, ?4)",
-                params![playlist_id, track.id, pos as i64, json_str],
+                 (playlist_id, track_id, position, track_data, service, updated_at) 
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![playlist_id, track.id, pos as i64, json_str, service, now],
             )
             .map_err(|e| e.to_string())?;
         }
@@ -236,11 +265,7 @@ pub async fn search_provider_tracks(
             .ok_or_else(|| format!("No active session found for {}", service))?
     };
 
-    let provider: Box<dyn MusicProvider> = match service.as_str() {
-        "spotify" => Box::new(SpotifyProvider::new(token)),
-        "ytmusic" => Box::new(YouTubeMusicProvider::new(token)),
-        _ => return Err(format!("Unsupported service: {}", service)),
-    };
+    let provider = build_provider(&state, &service, token)?;
 
     provider.search_track(&query).await
 }
@@ -288,11 +313,11 @@ pub async fn resolve_track_by_url(
             .ok_or_else(|| format!("No active session found for {}", service))?
     };
 
-    let provider: Box<dyn MusicProvider> = match service.as_str() {
-        "spotify" => Box::new(SpotifyProvider::new(token)),
-        "ytmusic" => Box::new(YouTubeMusicProvider::new(token)),
-        _ => return Err(format!("Unsupported service: {}", service)),
-    };
+    let provider = build_provider(&state, &service, token)?;
+
+    if let Ok(Some(direct)) = provider.fetch_track_by_id(&extracted_id).await {
+        return Ok(direct);
+    }
 
     let candidates = provider.search_track(&extracted_id).await?;
     if let Some(matched) = candidates.iter().find(|t| t.id == extracted_id) {

@@ -4,6 +4,7 @@ import { Search, X } from "lucide-react";
 interface SearchInputProps extends InputHTMLAttributes<HTMLInputElement> {
   value: string;
   onClear?: () => void;
+  inputRef?: React.Ref<HTMLInputElement>;
 }
 
 export const SearchInput: React.FC<SearchInputProps> = ({
@@ -12,12 +13,14 @@ export const SearchInput: React.FC<SearchInputProps> = ({
   onClear,
   placeholder = "Search...",
   className = "",
+  inputRef,
   ...props
 }) => {
   return (
     <div className={`relative flex items-center ${className}`}>
       <Search className="absolute left-2.5 w-3.5 h-3.5 text-zinc-500 pointer-events-none" />
       <input
+        ref={inputRef}
         type="text"
         value={value}
         onChange={onChange}

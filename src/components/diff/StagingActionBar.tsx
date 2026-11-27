@@ -1,6 +1,7 @@
 import React from "react";
-import { CheckCheck, Ban, Copy, ArrowRight } from "lucide-react";
+import { CheckCheck, Ban, Copy, ArrowRight, Volume2, Square, AlertCircle } from "lucide-react";
 import { useTransfer } from "../../context/TransferContext";
+import { useAudioPreview } from "../../context/AudioContext";
 
 interface StagingActionBarProps {
   selectedCount: number;
@@ -8,6 +9,7 @@ interface StagingActionBarProps {
   exactCount: number;
   amberCount: number;
   redCount: number;
+  playingTrackTitle?: string;
   onAcceptAllAmbiguous: () => void;
   onSkipUnresolved: () => void;
   onDeduplicate: () => void;
@@ -20,12 +22,14 @@ export const StagingActionBar: React.FC<StagingActionBarProps> = ({
   exactCount,
   amberCount,
   redCount,
+  playingTrackTitle,
   onAcceptAllAmbiguous,
   onSkipUnresolved,
   onDeduplicate,
   onStartTransfer,
 }) => {
   const { stage } = useTransfer();
+  const { activeTrackId, isPlaying, error: audioError, stopPreview } = useAudioPreview();
   const isTransferring = stage === "starting" || stage === "transferring" || stage === "paused";
   const selectedPercent = totalCount > 0 ? Math.round((selectedCount / totalCount) * 100) : 0;
   const exactPercent = totalCount > 0 ? (exactCount / totalCount) * 100 : 0;
@@ -40,6 +44,39 @@ export const StagingActionBar: React.FC<StagingActionBarProps> = ({
         <span className="bg-amber-500 transition-all duration-300" style={{ width: `${amberPercent}%` }} />
         <span className="bg-rose-500 transition-all duration-300" style={{ width: `${redPercent}%` }} />
       </div>
+
+      {/* Inline Audio Preview Status Strip */}
+      {(activeTrackId || audioError) && (
+        <div className="border-b border-white/[0.06] bg-[#0c0c12] px-4 py-1.5 sm:px-5 lg:px-6">
+          <div className="w-full max-w-[1440px] mx-auto flex items-center justify-between gap-3 text-[11px]">
+            {audioError ? (
+              <div className="flex items-center gap-1.5 text-amber-300 min-w-0">
+                <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span className="truncate">{audioError}</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-emerald-300 min-w-0">
+                <Volume2 className={`w-3.5 h-3.5 text-emerald-400 shrink-0 ${isPlaying ? "animate-pulse" : ""}`} />
+                <span className="truncate font-medium">
+                  {isPlaying ? "Playing preview" : "Preview paused"}
+                  {playingTrackTitle ? `: ${playingTrackTitle}` : ""}
+                </span>
+              </div>
+            )}
+            {activeTrackId && (
+              <button
+                type="button"
+                onClick={stopPreview}
+                aria-label="Stop audio preview"
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white/[0.06] hover:bg-white/[0.12] text-zinc-200 border border-white/[0.08] cursor-pointer shrink-0"
+              >
+                <Square className="w-2.5 h-2.5 fill-current" />
+                <span>Stop</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="w-full max-w-[1440px] mx-auto px-4 py-3 sm:px-5 lg:px-6">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">

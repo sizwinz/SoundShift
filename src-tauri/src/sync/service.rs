@@ -5,7 +5,9 @@ use super::{
     store,
 };
 use crate::engine::{
-    matcher::{match_track, MatchClassification},
+    matcher::{
+        flush_match_cache_writes, load_match_cache_map, match_track_with_cache, MatchClassification,
+    },
     rate_limiter::SearchRateLimiter,
 };
 
@@ -135,6 +137,14 @@ pub async fn preview(
     } else {
         planner::initial_merge(id, &reads[0], &reads[1])
     };
+    let mut cache_maps = {
+        let conn = db.lock().map_err(|_| "Storage lock unavailable")?;
+        [
+            load_match_cache_map(&conn, "spotify", "ytmusic"),
+            load_match_cache_map(&conn, "ytmusic", "spotify"),
+        ]
+    };
+    let mut pending_writes = Vec::new();
     let limiter = SearchRateLimiter::default();
     for entry in &mut plan.desired {
         for target in Side::ALL {
@@ -171,15 +181,32 @@ pub async fn preview(
                 plan.conflicts.push(conflict);
                 continue;
             }
-            let matched = match_track(
+            let cache_slot = if target == Side::Ytmusic { 0 } else { 1 };
+            let cached_entry = cache_maps[cache_slot].get(&source.id);
+            let (matched, maybe_write) = match_track_with_cache(
                 &source,
                 target.other().service(),
                 target.service(),
                 providers[target.index()].as_ref(),
-                None,
+                cached_entry,
                 &limiter,
             )
-            .await;
+            .await
+            .map_err(|e| e.to_string())?;
+            if let Some(write) = maybe_write {
+                if let Some(ref resolved) = matched.matched_track {
+                    cache_maps[cache_slot].insert(
+                        source.id.clone(),
+                        crate::engine::matcher::CachedMatchEntry {
+                            target_track_id: resolved.id.clone(),
+                            match_method: write.match_method.clone(),
+                            confidence: write.confidence,
+                            target_track: Some(resolved.clone()),
+                        },
+                    );
+                }
+                pending_writes.push(write);
+            }
             if matched.status == MatchClassification::Exact {
                 if let Some(track) = matched.matched_track {
                     entry.set_track(target, track);
@@ -195,6 +222,7 @@ pub async fn preview(
             plan.conflicts.push(conflict);
         }
     }
-    let conn = db.lock().map_err(|_| "Storage lock unavailable")?;
+    let mut conn = db.lock().map_err(|_| "Storage lock unavailable")?;
+    let _ = flush_match_cache_writes(&mut conn, &pending_writes);
     store::save_preview(&conn, &plan)
 }

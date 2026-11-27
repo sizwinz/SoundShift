@@ -239,7 +239,26 @@ pub fn inspect_job(conn: &Connection, job_id: &str) -> Result<JobInspection, Str
         .filter(|d| *d > chrono::Utc::now().timestamp_millis())
         .max()
     {
-        format!("Provider deferred retry until Unix milliseconds {}; no automatic send before that time",deadline)
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let wait_secs = ((deadline - now_ms).max(1_000) + 999) / 1000;
+        let mins = wait_secs / 60;
+        let secs = wait_secs % 60;
+        let wait_label = if mins > 0 {
+            format!("{}m {}s", mins, secs)
+        } else {
+            format!("{}s", secs)
+        };
+        let until = chrono::DateTime::from_timestamp_millis(deadline)
+            .map(|dt| {
+                dt.with_timezone(&chrono::Local)
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string()
+            })
+            .unwrap_or_else(|| "shortly".to_string());
+        format!(
+            "Provider deferred retry for {} (until {}); no automatic send before that time",
+            wait_label, until
+        )
     } else {
         "Inspect recorded outcomes; unresolved or legacy evidence requires manual provider review"
             .into()
@@ -500,7 +519,7 @@ pub async fn resume_job(
                 if operation.retry_not_before_ms.is_some_and(|deadline|chrono::Utc::now().timestamp_millis()<deadline) {return Err("Provider retry guidance still defers this operation; retry later".into());}
                 conn.execute("UPDATE transfer_operations SET status='pending',sent_at=NULL WHERE operation_id=?1 AND status!='confirmed'",[&operation.operation_id]).map_err(|e|e.to_string())?;
             }
-            if !crate::engine::worker::journaled_add(db,provider,job_id,&target,operation.operation_index,&operation.payload,&budget,control).await? {break;}
+            if !crate::engine::worker::journaled_add_with_options(db,provider,job_id,&target,operation.operation_index,&operation.payload,&budget,control,config.skip_duplicates).await? {break;}
         }
         if control.is_stopping() {control.finish().await?;} else {
             let expected={let conn=db.lock().map_err(|_|"Recovery storage lock unavailable")?;let snapshot=crate::engine::snapshot::load_snapshot(&conn,&format!("snap_{}",config.job_id))?;let mut ids=snapshot.pre_existing_track_ids;ids.extend(snapshot.added_track_ids);ids};

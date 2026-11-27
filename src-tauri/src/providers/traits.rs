@@ -66,16 +66,62 @@ pub trait MusicProvider: Send + Sync {
         tx: Option<tokio::sync::mpsc::Sender<Vec<SourceTrack>>>,
     ) -> Result<Vec<SourceTrack>, String>;
     async fn search_track(&self, query: &str) -> Result<Vec<SourceTrack>, String>;
+    async fn search_track_resilient(&self, query: &str) -> Result<Vec<SourceTrack>, ProviderError> {
+        self.search_track(query)
+            .await
+            .map_err(ProviderError::before_send)
+    }
+    async fn fetch_track_by_id(
+        &self,
+        _track_id: &str,
+    ) -> Result<Option<SourceTrack>, ProviderError> {
+        Ok(None)
+    }
     async fn create_playlist(
         &self,
         title: &str,
         description: Option<&str>,
     ) -> Result<String, String>;
+    async fn create_playlist_checked(
+        &self,
+        title: &str,
+        description: Option<&str>,
+    ) -> Result<String, ProviderError> {
+        self.create_playlist(title, description)
+            .await
+            .map_err(|err| {
+                let kind = crate::providers::error::classify_error(&err);
+                let lower = err.to_ascii_lowercase();
+                let certainty = if matches!(
+                    kind,
+                    ProviderErrorKind::Authentication
+                        | ProviderErrorKind::Permission
+                        | ProviderErrorKind::RateLimited
+                ) || lower.contains("400")
+                    || lower.contains("404")
+                    || lower.contains("422")
+                    || lower.contains("bad request")
+                {
+                    SendCertainty::Rejected
+                } else {
+                    SendCertainty::MayHaveApplied
+                };
+                ProviderError::new(kind, certainty, &err)
+            })
+    }
     async fn add_tracks_to_playlist(
         &self,
         playlist_id: &str,
         track_ids: &[String],
     ) -> Result<(), String>;
+    async fn add_occurrences_with_options(
+        &self,
+        playlist_id: &str,
+        ids: &[String],
+        _skip_duplicates: bool,
+    ) -> Result<MutationOutcome, ProviderError> {
+        self.add_occurrences(playlist_id, ids).await
+    }
     async fn remove_tracks_from_playlist(
         &self,
         playlist_id: &str,

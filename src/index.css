@@ -68,7 +68,6 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* Glass and frost styling inspired by Sonora */
 .glass-panel {
   background: rgba(12, 12, 16, 0.78);
   backdrop-filter: blur(16px);
@@ -91,15 +90,32 @@ body {
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
 }
 
-/* Reduced motion accessibility support */
-.reduce-motion *,
+.dialog-overscroll {
+  overscroll-behavior: contain;
+}
+
+/* Reduced motion accessibility support: valid independent blocks for both OS and client setting */
 @media (prefers-reduced-motion: reduce) {
+  .animate-pulse,
+  .animate-spin,
+  .animate-in {
+    animation: none !important;
+  }
+
   * {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+.reduce-motion .animate-pulse,
+.reduce-motion .animate-spin,
+.reduce-motion .animate-in {
+  animation: none !important;
+}
+
+.reduce-motion * {
+  scroll-behavior: auto !important;
+  transition-property: color, background-color, border-color, opacity !important;
 }
 
 /* High-density desktop scrollbars */

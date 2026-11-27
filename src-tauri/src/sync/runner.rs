@@ -350,11 +350,56 @@ fn changed_data(
     Ok(next)
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SyncProgressPayload {
+    pub pair_id: String,
+    pub job_id: String,
+    pub processed: usize,
+    pub total: usize,
+    pub side: String,
+    pub track_title: String,
+}
+
+fn count_remaining_edits(data: &SyncRunData) -> usize {
+    let mut temp = data.clone();
+    let mut count = 0usize;
+    while let Some(edit) = next_edit(&temp) {
+        count += 1;
+        let fake_outcome = MutationOutcome {
+            occurrences: vec![crate::providers::contracts::OccurrenceOutcome {
+                index: 0,
+                track_id: edit.track.id.clone(),
+                status: crate::providers::contracts::OccurrenceStatus::Accepted,
+                remote_id: Some(format!("sim_{count}")),
+            }],
+            revision: None,
+        };
+        match changed_data(&temp, &edit, &fake_outcome) {
+            Ok(next) => temp = next,
+            Err(_) => break,
+        }
+        if count > 50_000 {
+            break;
+        }
+    }
+    count
+}
+
 pub async fn execute(
     db: Database,
     plan_id: &str,
     providers: Providers,
     control: TransferControl,
+) -> Result<SyncRunSummary, String> {
+    execute_with_progress(db, plan_id, providers, control, |_| {}).await
+}
+
+pub async fn execute_with_progress(
+    db: Database,
+    plan_id: &str,
+    providers: Providers,
+    control: TransferControl,
+    on_progress: impl Fn(SyncProgressPayload) + Send + Sync,
 ) -> Result<SyncRunSummary, String> {
     let plan = {
         let conn = db.lock().map_err(|_| "Storage lock unavailable")?;
@@ -389,7 +434,7 @@ pub async fn execute(
         start_run(&conn, &pair, &data, &job)?;
     }
     control.start()?;
-    let result = drive(&db, &pair, &mut data, &providers, &control).await;
+    let result = drive(&db, &pair, &mut data, &providers, &control, &on_progress).await;
     if let Err(error) = result {
         let error = crate::diagnostics::sanitize_for_log(&error);
         let _ = control.fail(&error);
@@ -404,6 +449,16 @@ pub async fn resume(
     job: &str,
     providers: Providers,
     control: TransferControl,
+) -> Result<SyncRunSummary, String> {
+    resume_with_progress(db, job, providers, control, |_| {}).await
+}
+
+pub async fn resume_with_progress(
+    db: Database,
+    job: &str,
+    providers: Providers,
+    control: TransferControl,
+    on_progress: impl Fn(SyncProgressPayload) + Send + Sync,
 ) -> Result<SyncRunSummary, String> {
     if control.snapshot()?.job_id != job {
         return Err("Sync control identity differs from recorded run".into());
@@ -439,7 +494,7 @@ pub async fn resume(
         }
     }
     control.start()?;
-    let result = drive(&db, &pair, &mut data, &providers, &control).await;
+    let result = drive(&db, &pair, &mut data, &providers, &control, &on_progress).await;
     if let Err(error) = result {
         let _ = control.fail(&error);
         let conn = db.lock().map_err(|_| "Storage lock unavailable")?;
@@ -542,8 +597,13 @@ async fn drive(
     data: &mut SyncRunData,
     providers: &Providers,
     control: &TransferControl,
+    on_progress: &(impl Fn(SyncProgressPayload) + Send + Sync),
 ) -> Result<(), String> {
     let job = control.snapshot()?.job_id;
+    let mut verified_preflight = [false, false];
+    let mut verified_cache: [Option<PlaylistRead>; 2] = [None, None];
+    let mut processed = 0usize;
+
     while let Some(edit) = next_edit(data) {
         if !control.wait_until_ready().await? {
             control.finish().await?;
@@ -552,15 +612,34 @@ async fn drive(
         let i = edit.side.index();
         let provider = &providers[i];
         let playlist = &pair.endpoint(edit.side).playlist_id;
-        provider.check_session().await.map_err(|e| e.to_string())?;
-        provider
-            .check_playlist_editable(playlist)
-            .await
-            .map_err(|e| e.to_string())?;
-        let current = provider
-            .read_playlist(playlist)
-            .await
-            .map_err(|e| e.to_string())?;
+        if !verified_preflight[i] {
+            provider.check_session().await.map_err(|e| e.to_string())?;
+            provider
+                .check_playlist_editable(playlist)
+                .await
+                .map_err(|e| e.to_string())?;
+            verified_preflight[i] = true;
+        }
+        let current = match verified_cache[i].take() {
+            Some(cached) if cached.revision.is_some() => {
+                let live_rev = provider
+                    .playlist_revision(playlist)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if live_rev == cached.revision {
+                    cached
+                } else {
+                    provider
+                        .read_playlist(playlist)
+                        .await
+                        .map_err(|e| e.to_string())?
+                }
+            }
+            _ => provider
+                .read_playlist(playlist)
+                .await
+                .map_err(|e| e.to_string())?,
+        };
         if !same_state(&data.expected[i], &current) {
             return Err("Playlist drift detected before mutation; review required".into());
         }
@@ -699,8 +778,23 @@ async fn drive(
         crash_point("checkpoint");
         permit.checkpointed()?;
         match verification {
-            Ok((proposed, _)) => *data = proposed,
+            Ok((proposed, after)) => {
+                verified_cache[i] = Some(after);
+                *data = proposed;
+                processed += 1;
+                let total_remaining = count_remaining_edits(data);
+                on_progress(SyncProgressPayload {
+                    pair_id: pair.pair_id.clone(),
+                    job_id: job.clone(),
+                    processed,
+                    total: (processed + total_remaining).max(processed),
+                    side: edit.side.service().to_string(),
+                    track_title: edit.track.title.clone(),
+                });
+            }
             Err(error) => {
+                verified_preflight[i] = false;
+                verified_cache[i] = None;
                 if let Some(delay) = retry_delay.filter(|delay| *delay <= 30_000 && attempts < 6) {
                     let _ = delay;
                     let deadline = retry_deadline.ok_or("Retry deadline missing")?;

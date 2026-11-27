@@ -40,11 +40,11 @@ it("offers explicit attributed rollback after inspection and refreshes its ackno
     const container=document.createElement("div");document.body.append(container);const root=createRoot(container);
     try {
         await act(async()=>{root.render(<TransferHistory/>);});
-        const find=(text:string)=>Array.from(container.querySelectorAll("button")).find(b=>b.textContent?.includes(text));
+        const find=(text:string)=>Array.from(document.body.querySelectorAll("button")).find(b=>b.textContent?.includes(text));
         await act(async()=>find("Inspect recovery")!.click());
         const rollback=find("Rollback recorded additions");expect(rollback).toBeTruthy();
         await act(async()=>rollback!.click());
-        expect(container.querySelector('[role="dialog"]')).toBeTruthy();
+        expect(document.body.querySelector('[role="dialog"]')).toBeTruthy();
         await act(async()=>find("Confirm Rollback")!.click());
         expect(mocks.invoke).toHaveBeenCalledWith("execute_snapshot_rollback",{snapshotId:"snap_owned-job",deleteEntirePlaylist:false});
         expect(container.textContent).toContain("Rolled Back");

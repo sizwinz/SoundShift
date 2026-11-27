@@ -4,9 +4,15 @@ import { Minus, Square, Copy, X } from "lucide-react";
 
 interface TitlebarProps {
   breadcrumb?: string;
+  onBreadcrumbClick?: () => void;
+  activeStatus?: {
+    label: string;
+    tone: "emerald" | "amber" | "rose";
+    onClick?: () => void;
+  } | null;
 }
 
-export function Titlebar({ breadcrumb }: TitlebarProps) {
+export function Titlebar({ breadcrumb, onBreadcrumbClick, activeStatus }: TitlebarProps) {
   const [isMaximized, setIsMaximized] = useState(false);
   const inTauri = isTauri();
 
@@ -93,17 +99,52 @@ export function Titlebar({ breadcrumb }: TitlebarProps) {
             SOUNDSHIFT
           </span>
           <span className="text-[10px] font-mono text-zinc-500 bg-white/[0.04] px-1.5 py-0.2 rounded border border-white/[0.08]">
-            v0.9.1
+            v0.10.0
           </span>
         </div>
 
         {breadcrumb && (
           <div className="flex items-center gap-1.5 text-xs text-zinc-500 truncate ml-2">
             <span>/</span>
-            <span className="text-zinc-300 font-medium truncate">{breadcrumb}</span>
+            {onBreadcrumbClick ? (
+              <button
+                type="button"
+                onClick={onBreadcrumbClick}
+                className="text-zinc-300 hover:text-zinc-100 font-medium truncate transition-colors cursor-pointer"
+              >
+                {breadcrumb}
+              </button>
+            ) : (
+              <span className="text-zinc-300 font-medium truncate">{breadcrumb}</span>
+            )}
           </div>
         )}
       </div>
+
+      {activeStatus && (
+        <button
+          type="button"
+          onClick={activeStatus.onClick}
+          className={`mr-2 hidden sm:inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border text-[10px] font-mono transition-colors cursor-pointer shrink-0 ${
+            activeStatus.tone === "rose"
+              ? "bg-rose-950/60 border-rose-500/35 text-rose-300 hover:bg-rose-900/60"
+              : activeStatus.tone === "amber"
+              ? "bg-amber-950/60 border-amber-500/35 text-amber-300 hover:bg-amber-900/60"
+              : "bg-emerald-950/60 border-emerald-500/35 text-emerald-300 hover:bg-emerald-900/60"
+          }`}
+        >
+          <span
+            className={`w-1.5 h-1.5 rounded-full ${
+              activeStatus.tone === "rose"
+                ? "bg-rose-400"
+                : activeStatus.tone === "amber"
+                ? "bg-amber-400 animate-pulse"
+                : "bg-emerald-400 animate-pulse"
+            }`}
+          />
+          <span>{activeStatus.label}</span>
+        </button>
+      )}
 
       <div className="flex items-center gap-0.5 shrink-0">
         <button

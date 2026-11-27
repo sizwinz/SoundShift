@@ -252,6 +252,7 @@ struct ChunkWorkerContext {
     chunk_idx: usize,
     worker_id: usize,
     chunk: Vec<SourceTrack>,
+    skip_duplicates: bool,
     provider: Arc<Box<dyn MusicProvider>>,
     db: Arc<std::sync::Mutex<rusqlite::Connection>>,
     app: AppHandle,
@@ -271,7 +272,7 @@ fn checkpoint_cancelled_unsent(conn: &rusqlite::Connection, id: &str) -> Result<
 /// Persist intent before the send and a checkpoint before reporting success.
 /// Transport/partial outcomes are never replayed automatically. Presence in a
 /// playlist cannot establish whether this operation added a new occurrence.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, dead_code)]
 pub(crate) async fn journaled_add(
     db: &std::sync::Mutex<rusqlite::Connection>,
     provider: &dyn MusicProvider,
@@ -281,6 +282,32 @@ pub(crate) async fn journaled_add(
     ids: &[String],
     retry_budget: &AtomicU32,
     control: &TransferControl,
+) -> Result<bool, String> {
+    journaled_add_with_options(
+        db,
+        provider,
+        job_id,
+        target_id,
+        operation_index,
+        ids,
+        retry_budget,
+        control,
+        true,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn journaled_add_with_options(
+    db: &std::sync::Mutex<rusqlite::Connection>,
+    provider: &dyn MusicProvider,
+    job_id: &str,
+    target_id: &str,
+    operation_index: usize,
+    ids: &[String],
+    retry_budget: &AtomicU32,
+    control: &TransferControl,
+    skip_duplicates: bool,
 ) -> Result<bool, String> {
     let operation_id = {
         let conn = db
@@ -343,10 +370,62 @@ pub(crate) async fn journaled_add(
             conn.execute("UPDATE transfer_operations SET provider_response=?1,status='failed',certainty='failed',updated_at=?2 WHERE operation_id=?3",rusqlite::params![serde_json::to_string(&error).map_err(|e|e.to_string())?,chrono::Utc::now().timestamp(),operation_id]).map_err(|_|"Preflight failure checkpoint unavailable")?;
             return Err(error.to_string());
         }
-        let before = provider
-            .read_playlist(target_id)
-            .await
-            .map_err(|e| e.to_string())?;
+        let fast_before = if operation_index > 0 {
+            let revision_and_expected = {
+                let conn = db
+                    .lock()
+                    .map_err(|_| "Mutation preflight storage lock unavailable")?;
+                let rev = crate::engine::snapshot::latest_playlist_revision(&conn, job_id)?;
+                if rev.is_some() {
+                    let snapshot =
+                        crate::engine::snapshot::load_snapshot(&conn, &format!("snap_{}", job_id))?;
+                    let mut exp = snapshot.pre_existing_track_ids;
+                    exp.extend(snapshot.added_track_ids);
+                    Some((rev, exp))
+                } else {
+                    None
+                }
+            };
+            if let Some((Some(expected_rev), expected_ids)) = revision_and_expected {
+                let live_rev = provider
+                    .playlist_revision(target_id)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if live_rev.as_deref() == Some(expected_rev.as_str()) {
+                    Some(crate::providers::contracts::PlaylistRead {
+                        occurrences: expected_ids
+                            .into_iter()
+                            .enumerate()
+                            .map(
+                                |(index, id)| crate::providers::contracts::PlaylistOccurrence {
+                                    index,
+                                    track: SourceTrack {
+                                        id,
+                                        ..SourceTrack::unavailable(index)
+                                    },
+                                    remote_id: None,
+                                },
+                            )
+                            .collect(),
+                        revision: Some(expected_rev),
+                        complete: true,
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let before = match fast_before {
+            Some(read) => read,
+            None => provider
+                .read_playlist(target_id)
+                .await
+                .map_err(|e| e.to_string())?,
+        };
         if control.is_stopping() {
             let conn = db
                 .lock()
@@ -393,7 +472,9 @@ pub(crate) async fn journaled_add(
             )
             .map_err(|_| "Mutation send marker failed; no send")?;
         }
-        let response = provider.add_occurrences(target_id, ids).await;
+        let response = provider
+            .add_occurrences_with_options(target_id, ids, skip_duplicates)
+            .await;
         #[cfg(test)]
         safety_tests::crash_point("response");
         match response {
@@ -538,7 +619,7 @@ async fn process_chunk(ctx: ChunkWorkerContext) -> Result<(), String> {
     }
     let ids: Vec<String> = ctx.chunk.iter().map(|track| track.id.clone()).collect();
     let start = std::time::Instant::now();
-    match journaled_add(
+    match journaled_add_with_options(
         &ctx.db,
         ctx.provider.as_ref().as_ref(),
         &ctx.job_id,
@@ -547,6 +628,7 @@ async fn process_chunk(ctx: ChunkWorkerContext) -> Result<(), String> {
         &ids,
         &ctx.retry_budget,
         &ctx.control,
+        ctx.skip_duplicates,
     )
     .await
     {
@@ -707,13 +789,40 @@ async fn prepare_transfer(
             return Ok((snapshot_id, initial_target, pre_existing_tracks));
         };
         // No automatic create retry: a lost response can mean a playlist exists.
-        let id = provider
-            .create_playlist(&target_name, Some("Transferred with SoundShift"))
+        let id = match provider
+            .create_playlist_checked(&target_name, Some("Transferred with SoundShift"))
             .await
-            .map_err(|_| {
-                "Playlist creation outcome uncertain. Review the provider before retrying."
-                    .to_string()
-            })?;
+        {
+            Ok(id) => id,
+            Err(err) => {
+                let is_rejected = matches!(
+                    err.certainty,
+                    crate::providers::error::SendCertainty::NotSent
+                        | crate::providers::error::SendCertainty::Rejected
+                );
+                let outcome = if is_rejected {
+                    OperationOutcome::Failed
+                } else {
+                    OperationOutcome::Ambiguous
+                };
+                if let Ok(conn) = db.lock() {
+                    let payload =
+                        serde_json::to_string(&err).unwrap_or_else(|_| err.detail.clone());
+                    let _ =
+                        update_operation_outcome(&conn, &operation_id, outcome, 1, Some(&payload));
+                }
+                if is_rejected {
+                    return Err(crate::diagnostics::sanitize_for_log(&format!(
+                        "Playlist creation failed: {}",
+                        err.detail
+                    )));
+                }
+                return Err(crate::diagnostics::sanitize_for_log(&format!(
+                    "Playlist creation outcome uncertain: {}. Review the provider before retrying.",
+                    err.detail
+                )));
+            }
+        };
         if id.trim().is_empty() {
             return Err("Provider returned an empty playlist identity; recovery required".into());
         }
@@ -793,7 +902,22 @@ impl TransferWorkerPool {
         });
 
         let (snapshot_id, target_id, pre_existing_tracks) =
-            prepare_transfer(&self.db, provider.as_ref().as_ref(), &config, &control).await?;
+            match prepare_transfer(&self.db, provider.as_ref().as_ref(), &config, &control).await {
+                Ok(prepared) => prepared,
+                Err(err) => {
+                    let log = TransferLogPayload {
+                        job_id: config.job_id.clone(),
+                        timestamp: chrono::Utc::now().timestamp(),
+                        worker_id: 0,
+                        message: crate::diagnostics::sanitize_for_log(&err),
+                        level: "error".to_string(),
+                    };
+                    dispatch_transfer_log(log, |payload| {
+                        let _ = self.app.emit("transfer:log", payload);
+                    });
+                    return Err(err);
+                }
+            };
         let pre_existing_ids: Vec<String> = pre_existing_tracks
             .iter()
             .map(|track| track.id.clone())
@@ -871,6 +995,7 @@ impl TransferWorkerPool {
                 chunk_idx,
                 worker_id,
                 chunk,
+                skip_duplicates: config.skip_duplicates,
                 provider: provider.clone(),
                 db: self.db.clone(),
                 app: self.app.clone(),
