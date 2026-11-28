@@ -1,169 +1,217 @@
 <div align="center">
   <img src="public/app-logo.png" alt="SoundShift Logo" width="96" height="96" />
   <h1>SoundShift</h1>
-  <p><strong>Effortless, local-first playlist migration with live visual diffs and 1-click rollback.</strong></p>
+  <p><strong>Move and sync playlists locally between Spotify and YouTube Music without API keys, cloud servers, or track caps.</strong></p>
 
   <p>
-    <a href="https://github.com/sizwinz/SoundShift"><img src="https://img.shields.io/badge/Tauri-v2.x-blue?style=flat-square&logo=tauri" alt="Tauri v2" /></a>
-    <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-stable-orange?style=flat-square&logo=rust" alt="Rust" /></a>
-    <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react" alt="React 19" /></a>
-    <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5.6-blue?style=flat-square&logo=typescript" alt="TypeScript" /></a>
+    <a href="https://github.com/sizwinz/SoundShift/releases/latest"><img src="https://img.shields.io/github/v/release/sizwinz/SoundShift?style=flat-square&color=10b981&label=Release" alt="Latest Release" /></a>
+    <a href="https://github.com/sizwinz/SoundShift/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/sizwinz/SoundShift/ci.yml?branch=master&style=flat-square&label=CI" alt="CI Status" /></a>
+    <a href="https://github.com/sizwinz/SoundShift/releases"><img src="https://img.shields.io/github/downloads/sizwinz/SoundShift/total?style=flat-square&color=0ea5e9&label=Downloads" alt="Total Downloads" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="MIT License" /></a>
     <a href="PRIVACY.md"><img src="https://img.shields.io/badge/Telemetry-Zero-brightgreen?style=flat-square" alt="Zero Telemetry" /></a>
   </p>
 
   <p>
+    <a href="https://v2.tauri.app/"><img src="https://img.shields.io/badge/Tauri-v2-24C8DB?style=flat-square&logo=tauri&logoColor=white" alt="Tauri v2" /></a>
+    <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-stable-F74C00?style=flat-square&logo=rust&logoColor=white" alt="Rust" /></a>
+    <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React 19" /></a>
+    <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript 5.6" /></a>
+    <a href="https://www.sqlite.org/"><img src="https://img.shields.io/badge/SQLite-WAL-003B57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite WAL" /></a>
+  </p>
+
+  <p>
+    <a href="#download">Download</a> &bull;
     <a href="#features">Features</a> &bull;
-    <a href="#quick-start">Quick Start</a> &bull;
+    <a href="#two-way-sync">Two-Way Sync</a> &bull;
     <a href="#how-it-works">How It Works</a> &bull;
-    <a href="#supported-services">Supported Services</a> &bull;
-    <a href="CONTRIBUTING.md">Contributing</a> &bull;
-    <a href="PRIVACY.md">Privacy Policy</a>
+    <a href="#build-from-source">Build from Source</a> &bull;
+    <a href="PRIVACY.md">Privacy</a>
+  </p>
+
+  <p>
+    <img src="public/spotify-logo.webp" alt="Spotify" width="20" height="20" align="absmiddle" />
+    &nbsp;<strong>Spotify</strong>
+    &nbsp;&nbsp;&harr;&nbsp;&nbsp;
+    <img src="public/youtube-music-logo.png" alt="YouTube Music" width="20" height="20" align="absmiddle" />
+    &nbsp;<strong>YouTube Music</strong>
   </p>
 </div>
 
 ---
 
 <div align="center">
-<video src="https://github.com/user-attachments/assets/9983d9d2-e760-4070-9f3c-5011bd2af2d5" width="880" autoplay="autoplay"></video>
+  <video src="https://github.com/user-attachments/assets/9983d9d2-e760-4070-9f3c-5011bd2af2d5" width="880" autoplay="autoplay"></video>
 </div>
 
-## What is SoundShift?
+<br />
 
-SoundShift is a fast, local desktop app that moves your music playlists between **Spotify** and **YouTube Music**.
+## Why SoundShift?
 
-Most playlist transfer tools require paid monthly subscriptions, ask for third-party cloud access, or demand that you manually copy API tokens from browser developer tools. SoundShift runs **100% locally on your computer**, connects through native login windows, lets you preview matches before writes, and records transfer history for explicit recovery and guarded rollback.
+Moving playlists across platforms usually forces a tradeoff between monthly cloud subscriptions, arbitrary track limits, or brittle scripts requiring DevTools headers. SoundShift runs directly on your machine with isolated WebView logins, shows every track match before mutating remote libraries, and keeps every token and backup inside local storage.
 
-> **Metadata only:** SoundShift transfers playlist track metadata (titles, artists, and album info). It never downloads, rips, or streams audio files.
+| Capability | Cloud SaaS Tools | CLI Scripts | SoundShift |
+| :--- | :--- | :--- | :--- |
+| **Account Login** | Third-party cloud OAuth | Manual cookie and header copying | Isolated in-app WebView login |
+| **Pricing & Track Caps** | Paid tiers or 200-500 track caps | Free | Free, MIT open source, no track cap |
+| **Pre-Write Safety** | Blind batch writes | Terminal logs | Visual Green / Amber / Red staging diff |
+| **Two-Way Sync** | Subscription add-on | Manual re-runs | Built-in merge preview and hourly schedule |
+| **Crash Recovery & Undo** | Limited or unavailable | Manual cleanup | SQLite mutation journals and 1-click rollback |
+| **Data & Credentials** | Stored on vendor servers | Plaintext config files | OS Keychain / DPAPI, zero telemetry |
+
+> [!NOTE]
+> **Metadata-only transfers:** SoundShift reads and matches track metadata (titles, artists, albums, durations, and ISRC codes). It never downloads, rips, or redistributes audio files.
 
 ---
 
+<a id="download"></a>
+## Download (`v0.10.0`)
+
+Pre-built desktop installers are published on [GitHub Releases](https://github.com/sizwinz/SoundShift/releases/latest) for Windows, macOS, and Linux:
+
+| Platform | Architecture | Installer Packages |
+| :--- | :--- | :--- |
+| **Windows** | `x64` | [Setup EXE (`x64-setup.exe`)](https://github.com/sizwinz/SoundShift/releases/download/v0.10.0/SoundShift_0.10.0_x64-setup.exe) &bull; [MSI Installer (`x64_en-US.msi`)](https://github.com/sizwinz/SoundShift/releases/download/v0.10.0/SoundShift_0.10.0_x64_en-US.msi) |
+| **macOS** | Apple Silicon (`aarch64`) | [Disk Image (`aarch64.dmg`)](https://github.com/sizwinz/SoundShift/releases/download/v0.10.0/SoundShift_0.10.0_aarch64.dmg) &bull; [App Tarball (`aarch64.app.tar.gz`)](https://github.com/sizwinz/SoundShift/releases/download/v0.10.0/SoundShift_aarch64.app.tar.gz) |
+| **Linux** | `amd64` / `x86_64` | [AppImage](https://github.com/sizwinz/SoundShift/releases/download/v0.10.0/SoundShift_0.10.0_amd64.AppImage) &bull; [Debian Package (`.deb`)](https://github.com/sizwinz/SoundShift/releases/download/v0.10.0/SoundShift_0.10.0_amd64.deb) &bull; [RPM Package (`.rpm`)](https://github.com/sizwinz/SoundShift/releases/download/v0.10.0/SoundShift-0.10.0-1.x86_64.rpm) |
+
+---
+
+<a id="features"></a>
 ## Features
 
-### Direct In-App Login
-No developer keys, Spotify client secrets, or copied browser headers required. Log in directly through isolated native WebView windows. Credentials stay safely in your operating system's keychain.
+### Isolated In-App Authentication
+Log into Spotify and YouTube Music directly inside incognito WebView popups. SoundShift verifies the live session before closing the login window and stores credentials in your native OS secret store: Windows Credential Manager (with per-user DPAPI fallback), macOS Keychain, or Linux Freedesktop Secret Service. Disconnecting an account clears stored tokens and WebView session cookies immediately.
 
-### Staging Diff & Match Inspector
-Never wonder what got transferred. Before a single song is added to your destination playlist, SoundShift displays a full visual diff:
-- **Exact Matches (Green)**: Matched with high confidence using ISRC codes, normalized titles, and duration checks.
-- **Ambiguous Matches (Amber)**: Multiple candidate songs found; pick the right one manually in seconds.
-- **Unresolved / Missing (Red)**: Clearly highlighted so you know exactly which tracks need attention.
+### Visual Staging Diff & Disambiguation
+Inspect every match in a 60 FPS virtualized table powered by `@tanstack/react-virtual` before writing a single track:
+- **Exact Matches (Green)**: Matched deterministically via ISRC lookup, normalized metadata comparison, and duration bounds.
+- **Ambiguous Matches (Amber)**: Candidate picker lets you listen to previews and confirm the right version.
+- **Unmatched Tracks (Red)**: Step through unresolved rows, refine search queries, or paste a direct Spotify or YouTube track URL. Manual overrides persist in local SQLite for future transfers.
 
-### Scheduled Two-Way Playlist Sync
-Open **Sync**, link existing editable Spotify and YouTube Music playlists, and review their initial merged songs and order. Apply the reviewed merge before enabling the optional hourly schedule. Checks continue while the app is open, including when minimized; closing SoundShift stops scheduling.
+### 1-Click Snapshot Rollback & Crash Recovery
+Before modifying a destination playlist, SoundShift writes an immutable pre-mutation snapshot and a durable operation journal into SQLite (WAL mode). Transfer History lets you inspect per-track outcomes, reconcile uncertain network writes against the live playlist, resume proven unsent or rejected batches without double-adding confirmed songs, or trigger guarded rollback.
 
-Later runs propagate additions, removals, and ordering against a verified shared baseline. Intentional repeated songs remain separate occurrences. Approved mappings and exact matches can run automatically; conflicting edits, missing matches, incomplete reads, credential changes, and uncertain writes stop the pair for review. Names, descriptions, artwork, and visibility stay local.
+### Portable Backups & Fast Keyboard Navigation
+- Import tracklists from `JSON`, `CSV`, or `M3U8` files, or load public playlist URLs and IDs directly.
+- Export staged match tables and completed transfer reports (`JSON`, `CSV`, `M3U8`) or generate sanitized diagnostic reports with tokens automatically redacted.
+- Toggle close-to-tray background operation in Settings and navigate views rapidly using keyboard shortcuts.
 
-Sync requires recognized provider capabilities and verifies the ordered result on both services. Spotify duplicate-occurrence removal remains unsupported; changes to a Spotify baseline containing duplicates also require attribution review. YouTube Music writes require occurrence identifiers and recognized responses. Inspection, reconciliation, pause/resume/cancel, and guarded recovery are available from the Sync page; uncertain mutations are never replayed automatically. Unlinking preserves both remote playlists and recorded run history.
-
-### 1-Click Snapshot Rollback
-Every transfer records an immutable snapshot and a durable mutation journal before writes. Transfer History lets you inspect outcomes, reconcile uncertain work, resume proven unsent or rejected operations, and request rollback. Rollback requires attributable occurrences and verified remote post-state. Legacy records and unsupported provider capabilities stop for manual review; whole-playlist deletion is refused when independent removal verification is unavailable.
-
-### Smart Deduplication
-Merging into a playlist you already use? SoundShift checks existing songs in the destination by ID, ISRC, and title/artist, skipping tracks that are already there so you do not end up with duplicates.
-
-### Concurrent Worker Engine
-Powered by Tokio and Rust, matching runs concurrently while destination playlist writes run in order with one writer. Transfers use bounded retry budgets, provider retry guidance, interruptible waits, and live progress logs. Confirmed operations are never automatically replayed.
-
-### 100% Private & Local-First
-Zero cloud servers. Zero analytics or tracking beacons. Your tokens, snapshots, and playlist history stay entirely inside local SQLite storage on your machine.
+| Shortcut | Action |
+| :--- | :--- |
+| <kbd>Ctrl</kbd>+<kbd>K</kbd> / <kbd>Cmd</kbd>+<kbd>K</kbd> | Open global command palette |
+| <kbd>Ctrl</kbd>+<kbd>F</kbd> / <kbd>Cmd</kbd>+<kbd>F</kbd> | Focus active playlist or track filter |
+| <kbd>Alt</kbd>+<kbd>Left</kbd> / <kbd>Alt</kbd>+<kbd>Right</kbd> | Step between unresolved tracks in Disambiguation Drawer |
 
 ---
 
-## Supported Services
+<a id="two-way-sync"></a>
+## Two-Way Playlist Sync
 
-| Service | Read Playlists | Create New Playlist | Append to Existing | Deduplication | Auth Method |
-| :--- | :---: | :---: | :---: | :---: | :--- |
-| **Spotify** | Yes | Yes | Yes | Yes | Native WebView session |
-| **YouTube Music** | Yes | Yes | Yes | Yes | Native WebView session |
+Link existing editable playlists between Spotify and YouTube Music from the **Sync** workspace:
 
-*Playlist writes are serialized across transfers, sync, and recovery. The transfer workflow still refuses unsupported YouTube Music duplicate-preservation selections. Sync uses a separate occurrence-aware insertion path with receipt and ordered post-state verification. Live provider eligibility and native platform acceptance remain separate from local automated tests.*
+1. **Initial Merge Review**: SoundShift inspects both playlists, flags edits or conflicts, and lets you adjust the unified song order before touching either service.
+2. **Optional Hourly Schedule**: Once a baseline is verified, enable hourly background checks while SoundShift remains open (including minimized to the system tray). Closing the app halts scheduled runs cleanly.
+3. **Occurrence-Aware Safety**: Intentional duplicate songs retain distinct occurrence records. Conflicting concurrent edits, incomplete reads, credential changes, or ambiguous writes pause the pair for manual review instead of guessing. Playlist names, descriptions, cover art, and visibility settings stay untouched.
+
+> [!IMPORTANT]
+> Spotify duplicate-occurrence removal via API lacks occurrence-level targeting, so removals on Spotify playlists containing repeated tracks require manual review before applying sync updates.
 
 ---
 
+<a id="how-it-works"></a>
 ## How It Works
 
-```text
-[1. Connect Accounts]  -> Native WebView authentication (stored in OS Keychain)
-         |
-[2. Ingest Playlist]   -> Cached locally in SQLite for instant browsing
-         |
-[3. Match Pipeline]    -> Multi-pass matching: ISRC -> Normalization -> Duration check
-         |
-[4. Visual Staging]    -> Review exact and ambiguous matches before transferring
-         |
-[5. Batch Transfer]    -> Ordered playlist writes with deduplication and live telemetry
-         |
-[6. Snapshot Safety]   -> Durable outcomes, explicit recovery, and guarded rollback
+```mermaid
+flowchart LR
+    A["1. Connect Accounts"] --> B["2. Ingest & Cache"]
+    B --> C["3. Match Pipeline"]
+    C --> D["4. Visual Diff & Review"]
+    D --> E["5. Journaled Writes"]
+    E --> F["6. Snapshot Verification"]
 ```
 
----
+1. **Connect Accounts**: Acquire session credentials through isolated native WebViews and verify active endpoints.
+2. **Ingest & Cache**: Fetch paginated playlist tracks (including Spotify Liked Songs and YouTube Music Liked Music) and cache locally in SQLite with a 15-minute TTL.
+3. **Match Pipeline**: Run cached lookup first, then concurrent multi-pass matching (ISRC, normalized metadata, and duration-anchored scoring) with rate-limit backoff.
+4. **Visual Diff & Review**: Review Green/Amber/Red matches, resolve ambiguous songs, and toggle destination deduplication.
+5. **Journaled Writes**: Persist pre-mutation snapshots and execute sequential ordered writes (`1` writer on playlist mutations) with retry guidance.
+6. **Snapshot Verification**: Re-read destination state to verify completed transfers or flag uncertain items for explicit reconciliation.
 
-## Quick Start
+### Supported Services
 
-### Download
-Pre-built installers for Windows, macOS, and Linux will be available on the [Releases](https://github.com/sizwinz/SoundShift/releases) page.
-
-### Build from Source
-
-#### Prerequisites
-- **Node.js** (v22.12+; v24 recommended) and **npm**
-- **Rust** (current stable toolchain)
-- Platform build dependencies (MSVC on Windows, Xcode tools on macOS, WebKitGTK on Linux)
-
-#### Steps
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/sizwinz/SoundShift.git
-   cd SoundShift
-   ```
-
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-
-3. Run in development mode:
-   ```bash
-   npm run tauri dev
-   ```
-
-4. Build a release installer:
-   ```bash
-   npm run tauri build
-   ```
+| Service | Read & Liked Tracks | Create Playlist | Append & Deduplicate | Two-Way Sync | Auth Storage |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| <img src="public/spotify-logo.webp" alt="Spotify" width="16" height="16" align="absmiddle" /> **Spotify** | Yes | Yes | Yes | Yes | Isolated WebView + OS Vault |
+| <img src="public/youtube-music-logo.png" alt="YouTube Music" width="16" height="16" align="absmiddle" /> **YouTube Music** | Yes | Yes | Yes | Yes | Isolated WebView + OS Vault |
 
 ---
 
-## Testing & Quality
+<a id="architecture"></a>
+## Architecture
 
-SoundShift maintains strict quality gates across both the Rust systems core and React frontend:
+SoundShift pairs a React 19 TypeScript frontend with a Tauri v2 + Rust core:
+
+- **Systems Core (`src-tauri/`)**: Direct HTTP/2 `reqwest` provider drivers (avoiding browser CORS limits without external proxies), multi-threaded Tokio matching workers, SQLite WAL schema (`cached_playlists`, `cached_tracks`, `track_match_cache`, immutable snapshots, sync baselines), OS keychain integration via `keyring-rs`, and strict IPC command boundaries (`withGlobalTauri: false`).
+- **Presentation (`src/`)**: AMOLED true-black UI built with Tailwind CSS v4, `@tanstack/react-virtual` for smooth scrolling across large playlists, focus-trapped accessible portals, live transfer telemetry, and unified Sync review controls.
+
+---
+
+<a id="build-from-source"></a>
+## Build from Source
+
+### Prerequisites
+
+- **Node.js**: `v22.12+` (`v24` recommended) and `npm`
+- **Rust**: Current stable toolchain (`1.80+`, 2021 edition) via `rustup`
+- **Platform Native Libraries**:
+  - **Windows**: MSVC C++ Build Tools and Edge WebView2 Evergreen runtime
+  - **macOS**: Xcode Command Line Tools
+  - **Linux**: `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`, `libssl-dev`
+
+### Development & Release Build
 
 ```bash
-# Run backend test suite
-cargo test --manifest-path src-tauri/Cargo.toml
+git clone https://github.com/sizwinz/SoundShift.git
+cd SoundShift
+npm install
 
-# Run backend linter with zero warnings
+# Run desktop app in development mode with Vite HMR
+npm run tauri dev
+
+# Build production installer bundles
+npm run tauri build
+```
+
+<details>
+<summary><strong>Test & Quality Verification Commands</strong></summary>
+
+```bash
+# Rust formatting check
+cargo fmt --manifest-path src-tauri/Cargo.toml --check
+
+# Rust lints (zero warnings policy)
 cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 
-# Run frontend tests
+# Rust unit, safety, recovery, and sync tests
+cargo test --manifest-path src-tauri/Cargo.toml
+
+# Frontend unit and UI regression tests
 npm test
 
-# Run frontend build
+# TypeScript typecheck and Vite production bundle
 npm run build
 ```
 
----
-
-## Documentation
-
-- [Contributing Guidelines](CONTRIBUTING.md): Instructions for setup, coding standards, and submitting pull requests.
-- [Privacy & Security Policy](PRIVACY.md): Detailed information on local storage, credential management, and networking.
-- [Code of Conduct](CODE_OF_CONDUCT.md): Community pledge and standards for contributors.
+</details>
 
 ---
+
+## Documentation & Community
+
+- [Privacy & Security Policy](PRIVACY.md): Details on zero telemetry, OS keychain storage, CSP, and credential purging.
+- [Contributing Guidelines](CONTRIBUTING.md): Setup notes, PR workflow, and code quality rules.
+- [Code of Conduct](CODE_OF_CONDUCT.md): Community participation standards.
 
 ## License
 
-SoundShift is open source software licensed under the [MIT License](LICENSE).
+SoundShift is open-source software licensed under the [MIT License](LICENSE).
